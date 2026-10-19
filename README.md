@@ -6,13 +6,14 @@ Given a DTO with a foreign key (`userId`), jfxmap fills its related properties (
 service that owns the entity, batching the ids of every object into one request per entity type.
 
 > Status: early. `jfxmap-core` holds the mapping model and engine. Transports (NATS, gRPC, Kafka...), data providers
-> (JPA, MongoDB...) and the expression language evaluator are not ported yet.
+> (JPA, MongoDB...) are not ported yet.
 
 ## Modules
 
 | Module | Content |
 |---|---|
 | `jfxmap-core` | `ProfileOf` / `EntityConfigureOf` declarations, the `DistributedMapper` engine (id batching, dependency ordering, nested mapping, value write-back), the `RequestClient` and `QueryHandler` SPIs, and an in-memory handler for tests |
+| `jfxmap-expression` | The FxMap expression language (`Orders:where(Status = 'Done'):sum(Total)`): tokenizer, parser to a syntax tree, and an in-memory evaluator over records, JavaBeans, Maps and collections. See [expression.md](https://github.com/quyvu01/FxMap/blob/main/docs/expression.md) for the syntax |
 
 ## Usage
 
@@ -78,3 +79,15 @@ Java 21 and the Gradle wrapper:
 ```sh
 ./gradlew build
 ```
+
+## Expressions
+
+```java
+var evaluator = new ExpressionEvaluator();
+Object total = evaluator.evaluate("Orders:where(Status = 'Done'):sum(Total)", customer);
+Object page = evaluator.evaluate("Orders:orderBy(Total desc):limit(10).{Id, Total}", customer); // List<Map<String, Object>>
+ExpressionNode tree = ExpressionParser.parse("{Id, (Nickname ?? Name) as DisplayName}");
+```
+
+Names written in PascalCase (`Total`) also find the Java property `total`. `Address.City` fails when `Address` is null;
+`Address?.City` gives null.
