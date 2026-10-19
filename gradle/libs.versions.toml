@@ -7,7 +7,7 @@ hibernate = "7.4.5.Final"
 h2 = "2.4.240"
 grpc = "1.83.1"
 protobuf = "4.35.1"
-protobuf-plugin = "0.9.5"
+protobufPlugin = "0.9.5"
 spring-boot = "4.1.1"
 
 [libraries]
@@ -32,5 +32,5 @@ spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-aut
 spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
 
 [plugins]
-protobuf = { id = "com.google.protobuf", version.ref = "protobuf-plugin" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
