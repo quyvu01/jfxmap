@@ -12,7 +12,7 @@ service that owns the entity, batching the ids of every object into one request 
 
 | Module | Content |
 |---|---|
-| `jfxmap-core` | `ProfileOf` / `EntityConfigureOf` declarations, the `DistributedMapper` engine (id batching, dependency ordering, nested mapping, value write-back), the `RequestClient` and `QueryHandler` SPIs, and an in-memory handler for tests |
+| `jfxmap-core` | `ProfileOf` / `EntityConfigureOf` declarations, the `DistributedMapper` engine (id batching, dependency ordering, nested mapping, value write-back), the `RequestClient` and `QueryHandler` SPIs, and an in-memory handler that evaluates the full expression language (it depends on `jfxmap-expression`) |
 | `jfxmap-expression` | The FxMap expression language (`Orders:where(Status = 'Done'):sum(Total)`): tokenizer, parser to a syntax tree, and an in-memory evaluator over records, JavaBeans, Maps and collections. See [expression.md](https://github.com/quyvu01/FxMap/blob/main/docs/expression.md) for the syntax |
 
 ## Usage

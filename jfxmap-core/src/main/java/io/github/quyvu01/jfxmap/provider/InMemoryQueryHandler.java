@@ -2,6 +2,14 @@ package io.github.quyvu01.jfxmap.provider;
 
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
 import io.github.quyvu01.jfxmap.MapContext;
+import io.github.quyvu01.jfxmap.expressions.evaluation.BeanPropertyAccessor;
+import io.github.quyvu01.jfxmap.expressions.evaluation.ExpressionEvaluationException;
+import io.github.quyvu01.jfxmap.expressions.evaluation.ExpressionEvaluator;
+import io.github.quyvu01.jfxmap.expressions.evaluation.PropertyAccessor;
+import io.github.quyvu01.jfxmap.expressions.nodes.ExpressionNode;
+import io.github.quyvu01.jfxmap.expressions.parsing.ExpressionParseException;
+import io.github.quyvu01.jfxmap.expressions.parsing.ExpressionParser;
+import io.github.quyvu01.jfxmap.expressions.tokens.ExpressionTokenizeException;
 import io.github.quyvu01.jfxmap.fluent.EntityConfigureOf;
 import io.github.quyvu01.jfxmap.internal.BeanIntrospector;
 import io.github.quyvu01.jfxmap.internal.Json;
@@ -11,40 +19,54 @@ import io.github.quyvu01.jfxmap.response.ItemsResponse;
 import io.github.quyvu01.jfxmap.response.MapRequest;
 import io.github.quyvu01.jfxmap.response.ValueResponse;
 
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 
 /**
  * Answers requests from entities held in memory, as configured by an {@link EntityConfigureOf}: for tests, samples,
  * and services whose data fits in memory.
  *
- * <p>It evaluates property paths only: the default property ({@code null} expression), a property or exposed name
- * ({@code Name}, {@code UserEmail}) and navigations ({@code Country.Name}, {@code Country?.Name}). The rest of the
- * FxMap expression language (functions, filters, aggregations, projections) is reported as an
- * {@link ExpressionError} for that expression; the other expressions of the request are still answered.
+ * <p>It evaluates the whole FxMap expression language with the {@link ExpressionEvaluator} of jfxmap-expression:
+ * property paths ({@code Country?.Name}), functions ({@code Name:upper}), filters, aggregations
+ * ({@code Orders:sum(Total)}), projections ({@code {Id, Name}}) and the rest. A {@code null} expression gives the
+ * default property. An exposed name ({@code UserEmail}) stands for its property on the entity type, wherever the
+ * entity appears in the expression. An expression that does not parse or cannot be evaluated on one of the entities
+ * is reported as an {@link ExpressionError}; the other expressions of the request are still answered.
  *
  * @param <T> the entity type
  */
 public final class InMemoryQueryHandler<T> implements QueryHandler {
-    private static final Pattern PROPERTY_PATH =
-            Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*\\??(\\.[A-Za-z_][A-Za-z0-9_]*\\??)*$");
-
     private final EntityConfigureOf<T> config;
     private final Supplier<? extends Collection<? extends T>> entities;
+    private final ExpressionEvaluator evaluator;
 
-    public InMemoryQueryHandler(EntityConfigureOf<T> config, Supplier<? extends Collection<? extends T>> entities) {
+    /**
+     * @param config   the entity configuration
+     * @param entities gives the entities on each request
+     * @param clock    gives today for {@code :daysAgo}
+     */
+    public InMemoryQueryHandler(EntityConfigureOf<T> config, Supplier<? extends Collection<? extends T>> entities,
+                                Clock clock) {
         this.config = Objects.requireNonNull(config, "config");
         this.entities = Objects.requireNonNull(entities, "entities");
         // Fail now on an incomplete configuration rather than on the first request
         config.key();
+        this.evaluator = new ExpressionEvaluator(
+                new ExposedNameAccessor(config.entityType(), config.exposedNames(), new BeanPropertyAccessor()),
+                Objects.requireNonNull(clock, "clock"));
+    }
+
+    public InMemoryQueryHandler(EntityConfigureOf<T> config, Supplier<? extends Collection<? extends T>> entities) {
+        this(config, entities, Clock.systemDefaultZone());
     }
 
     public InMemoryQueryHandler(EntityConfigureOf<T> config, Collection<? extends T> entities) {
@@ -79,6 +101,22 @@ public final class InMemoryQueryHandler<T> implements QueryHandler {
         }
 
         var errors = new LinkedHashMap<String, ExpressionError>();
+        // Each expression is parsed once per request; null stands for the default property
+        var parsed = new HashMap<String, ExpressionNode>();
+        for (var expression : request.expressions()) {
+            if (expression == null) {
+                if (config.defaultProperty() == null)
+                    errors.put(null, new ExpressionError(null, "%s has no default property: give the rule an expression."
+                            .formatted(config.entityType().getSimpleName())));
+                continue;
+            }
+            try {
+                parsed.put(expression, ExpressionParser.parse(expression));
+            } catch (ExpressionTokenizeException | ExpressionParseException e) {
+                errors.put(expression, new ExpressionError(expression, e.getMessage()));
+            }
+        }
+
         var items = new ArrayList<DataResponse>();
         for (var id : request.selectorIds()) {
             var entity = byId.get(id);
@@ -87,9 +125,11 @@ public final class InMemoryQueryHandler<T> implements QueryHandler {
             for (var expression : request.expressions()) {
                 if (errors.containsKey(expression)) continue;
                 try {
-                    var value = evaluate(entity, expression);
+                    var value = expression == null
+                            ? BeanIntrospector.property(config.entityType(), config.defaultProperty()).get(entity)
+                            : evaluator.evaluate(parsed.get(expression), entity);
                     values.add(new ValueResponse(expression, value == null ? null : Json.write(value)));
-                } catch (UnsupportedExpression e) {
+                } catch (ExpressionEvaluationException e) {
                     errors.put(expression, new ExpressionError(expression, e.getMessage()));
                 }
             }
@@ -102,44 +142,19 @@ public final class InMemoryQueryHandler<T> implements QueryHandler {
         return new ItemsResponse(items, List.copyOf(errors.values()));
     }
 
-    private Object evaluate(T entity, String expression) {
-        if (expression == null) {
-            if (config.defaultProperty() == null)
-                throw new UnsupportedExpression("%s has no default property: give the rule an expression."
-                        .formatted(config.entityType().getSimpleName()));
-            return read(entity, config.defaultProperty(), null);
-        }
-        var trimmed = expression.strip();
-        if (!PROPERTY_PATH.matcher(trimmed).matches())
-            throw new UnsupportedExpression(("'%s' is not a property path; the in-memory handler does not evaluate "
-                    + "functions, filters, aggregations or projections.").formatted(expression));
-
-        var segments = trimmed.split("\\.");
-        Object current = entity;
-        for (int i = 0; i < segments.length; i++) {
-            if (current == null) return null;
-            var name = segments[i].endsWith("?") ? segments[i].substring(0, segments[i].length() - 1) : segments[i];
-            if (i == 0) name = config.exposedNames().getOrDefault(name, name);
-            current = read(current, name, expression);
-        }
-        return current;
-    }
-
-    // FxMap expressions name properties as .NET does (Name, Country); Java properties are camelCase (name, country).
-    private static Object read(Object target, String name, String expression) {
-        var properties = BeanIntrospector.properties(target.getClass());
-        var property = properties.get(name);
-        if (property == null) {
-            property = properties.values().stream().filter(p -> p.name().equalsIgnoreCase(name)).findFirst()
-                    .orElseThrow(() -> new UnsupportedExpression("'%s': %s has no property '%s'."
-                            .formatted(expression, target.getClass().getSimpleName(), name)));
-        }
-        return property.get(target);
-    }
-
-    private static final class UnsupportedExpression extends RuntimeException {
-        UnsupportedExpression(String message) {
-            super(message, null, false, false);
+    /**
+     * Resolves the exposed names of the entity type to their properties, as FxMap's TypeAccessor does, and the other
+     * names as the delegate does. The property names stay usable next to their exposed names.
+     */
+    private record ExposedNameAccessor(Class<?> entityType, Map<String, String> exposedNames,
+                                       PropertyAccessor delegate) implements PropertyAccessor {
+        @Override
+        public Property find(Class<?> type, String name) {
+            if (entityType.isAssignableFrom(type)) {
+                var property = exposedNames.get(name);
+                if (property != null) return delegate.find(type, property);
+            }
+            return delegate.find(type, name);
         }
     }
 }
