@@ -16,6 +16,7 @@ repositories {
 
 dependencies {
     api(libs.jackson.databind)
+    implementation(project(":jfxmap-expression"))
     implementation(libs.jackson.jsr310)
 
     testImplementation(platform(libs.junit.bom))
