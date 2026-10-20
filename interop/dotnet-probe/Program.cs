@@ -1,4 +1,7 @@
 using System.Text.Json;
+using Amazon;
+using FxMap.Aws.Sqs.Extensions;
+using FxMap.Azure.ServiceBus.Extensions;
 using FxMap.Abstractions;
 using FxMap.EntityFrameworkCore.Extensions;
 using FxMap.Extensions;
@@ -11,7 +14,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-// DotnetProbe owner|consumer nats|rabbitmq|kafka <address>
+// DotnetProbe owner|consumer nats|rabbitmq|kafka|sqs|servicebus <address>
+//   the address of sqs is the endpoint of LocalStack, that of servicebus the connection string of the emulator
 //   owner:    owns the string key UserOf (users 1 Alice, 2 Bob) and answers over the transport until it is stopped
 //   consumer: maps the orders of users 1, 2 and 3 over the transport and prints them as JSON
 var (role, transport, address) = (args[0], args[1], args[2]);
@@ -32,6 +36,15 @@ var fxMap = builder.Services.AddFxMap(cfg =>
             r.Host(parts[0], "/", int.Parse(parts[1]));
         }),
         "kafka" => c => c.AddKafka(k => k.Host(address)),
+        "sqs" => c => c.AddSqs(s => s.Region(RegionEndpoint.USEast1, credential =>
+        {
+            credential.AccessKeyId("test");
+            credential.SecretAccessKey("test");
+            credential.ServiceUrl(address);
+        })),
+        // The emulator answers a wait for the next session only when it times out: a short one picks up new sessions
+        "servicebus" => c => c.AddAzureServiceBus(s =>
+            s.Host(address, o => o.RetryOptions.TryTimeout = TimeSpan.FromSeconds(3))),
         _ => throw new ArgumentException(transport)
     };
     addTransport(cfg);
