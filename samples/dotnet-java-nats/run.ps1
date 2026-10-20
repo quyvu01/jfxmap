@@ -121,6 +121,9 @@ try {
         Write-Host '  curl http://localhost:5080/reviews/3'
         Write-Host '  curl http://localhost:5080/products'
         Write-Host '  curl http://localhost:8090/customers'
+        Write-Host 'Swagger: http://localhost:5080/swagger and http://localhost:8090/swagger-ui.html'
+        Write-Host 'GraphQL: http://localhost:5080/graphql and http://localhost:8090/graphiql'
+        Write-Host 'The SQL of each service is in its log.'
         Write-Host 'Press Ctrl+C to stop.'
         while (-not ($processes | Where-Object { $_.HasExited })) { Start-Sleep -Seconds 1 }
     }

@@ -106,5 +106,8 @@ echo "  curl http://localhost:8090/orders/2"
 echo "  curl http://localhost:5080/reviews/3"
 echo "  curl http://localhost:5080/products"
 echo "  curl http://localhost:8090/customers"
+echo "Swagger: http://localhost:5080/swagger and http://localhost:8090/swagger-ui.html"
+echo "GraphQL: http://localhost:5080/graphql and http://localhost:8090/graphiql"
+echo "The SQL of each service is in its log."
 echo "Press Ctrl+C to stop."
 wait

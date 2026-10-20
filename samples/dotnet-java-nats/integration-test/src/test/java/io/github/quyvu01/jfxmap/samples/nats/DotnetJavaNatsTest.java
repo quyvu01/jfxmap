@@ -119,6 +119,15 @@ class DotnetJavaNatsTest {
         return HTTP.send(HttpRequest.newBuilder(URI.create(url)).build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    private static String graphQl(String url, String query) throws Exception {
+        var body = HTTP.send(HttpRequest.newBuilder(URI.create(url + "/graphql"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"query\":\"" + query + "\"}")).build(),
+                HttpResponse.BodyHandlers.ofString()).body();
+        assertThat(body).doesNotContain("\"errors\"");
+        return body;
+    }
+
     private static String salesUrl() {
         return "http://localhost:" + sales.getEnvironment().getProperty("local.server.port");
     }
@@ -149,5 +158,23 @@ class DotnetJavaNatsTest {
         assertThat(JsonPath.<Integer>read(body, "$[0].customerOrderCount")).isEqualTo(3);
         assertThat(JsonPath.<Integer>read(body, "$[3].customerOrderCount")).isEqualTo(1);
         assertThat(JsonPath.<Object>read(body, "$[3].customerCity")).isNull();
+    }
+
+    @Test
+    void javaGraphQlResolvesTheProductsOfDotnet() throws Exception {
+        var body = graphQl(salesUrl(), "{ orders { id productName categoryName } }");
+
+        assertThat(JsonPath.<List<String>>read(body, "$.data.orders[*].productName")).containsExactly(
+                "ThinkPad X1 Carbon", "USB-C Dock", "Pixel 10", "Mechanical Keyboard", "MacBook Air 15");
+        assertThat(JsonPath.<String>read(body, "$.data.orders[2].categoryName")).isEqualTo("Phones");
+    }
+
+    @Test
+    void dotnetGraphQlResolvesTheCustomersOfJava() throws Exception {
+        var body = graphQl(catalogUrl, "{ reviews { id customerName customerOrderCount } }");
+
+        assertThat(JsonPath.<List<String>>read(body, "$.data.reviews[*].customerName")).containsExactly(
+                "Alice Nguyen", "Alice Nguyen", "Bob Martin", "Carol Tran");
+        assertThat(JsonPath.<Integer>read(body, "$.data.reviews[0].customerOrderCount")).isEqualTo(3);
     }
 }
