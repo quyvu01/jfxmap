@@ -130,6 +130,11 @@ public final class JpaQueryHandler<T> implements QueryHandler {
     }
 
     @Override
+    public String dbSystem() {
+        return "jpa";
+    }
+
+    @Override
     public CompletionStage<ItemsResponse> handle(MapRequest request, MapContext context) {
         Objects.requireNonNull(request, "request");
         return CompletableFuture.supplyAsync(() -> answer(request), executor);

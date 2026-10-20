@@ -1,0 +1,40 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Queues": [
+          {
+            "Name": "fxmap-request--userof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "fxmap-reply--userof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          }
+        ]
+      }
+    ],
+    "Logging": {
+      "Type": "File"
+    }
+  }
+}

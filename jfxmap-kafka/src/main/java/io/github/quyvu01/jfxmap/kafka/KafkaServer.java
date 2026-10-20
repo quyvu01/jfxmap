@@ -1,6 +1,7 @@
 package io.github.quyvu01.jfxmap.kafka;
 
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
+import io.github.quyvu01.jfxmap.RequestServer;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.wire.WireResponder;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 /**
  * Answers the requests for the keys this service owns over Kafka (FxMap's KafkaServer): it creates the request topic
@@ -32,11 +34,14 @@ import java.util.concurrent.CompletableFuture;
  * request is answered with a {@code Result} on its reply topic, keyed by its correlation id; the offsets are committed
  * once the requests of a poll are answered.
  *
+ * <p>The server fails, and stops, when its consumer fails (the broker refuses it, a topic was deleted...); a
+ * {@link io.github.quyvu01.jfxmap.supervision.ServerSupervisor} starts it again.
+ *
  * <pre>{@code
  * KafkaServer server = KafkaServer.builder("localhost:9092", handlers).build().start();
  * }</pre>
  */
-public final class KafkaServer implements AutoCloseable {
+public final class KafkaServer implements RequestServer {
     private static final System.Logger LOGGER = System.getLogger(KafkaServer.class.getName());
 
     private final Map<String, Object> config;
@@ -49,6 +54,8 @@ public final class KafkaServer implements AutoCloseable {
     private Thread loop;
     private volatile KafkaConsumer<String, byte[]> consumer;
     private volatile boolean running;
+    // Guarded by this
+    private CompletableFuture<Void> run = CompletableFuture.completedFuture(null);
 
     private KafkaServer(Builder builder) {
         this.config = Map.copyOf(builder.config);
@@ -80,8 +87,11 @@ public final class KafkaServer implements AutoCloseable {
     }
 
     /** Creates the request topics and starts reading them; does nothing when it already runs or has no key. */
+    @Override
     public synchronized KafkaServer start() {
         if (running || keysByTopic.isEmpty()) return this;
+        // The loop of an earlier run may still be closing its consumer
+        awaitLoop();
         KafkaTopics.create(config, keysByTopic.keySet(), partitions, replicationFactor);
         var consumerConfig = new HashMap<>(config);
         consumerConfig.put(ConsumerConfig.GROUP_ID_CONFIG, KafkaNames.SERVER_GROUP_ID);
@@ -93,15 +103,27 @@ public final class KafkaServer implements AutoCloseable {
         var replies = new KafkaProducer<>(new HashMap<>(config), new StringSerializer(), new ByteArraySerializer());
         consumer = requests;
         running = true;
-        loop = Thread.ofPlatform().daemon().name("jfxmap-kafka-server").start(() -> serve(requests, replies));
+        var current = new CompletableFuture<Void>();
+        run = current;
+        loop = Thread.ofPlatform().daemon().name("jfxmap-kafka-server")
+                .start(() -> serve(requests, replies, current));
         return this;
     }
 
+    @Override
     public synchronized boolean isRunning() {
         return running;
     }
 
-    private void serve(KafkaConsumer<String, byte[]> requests, KafkaProducer<String, byte[]> replies) {
+    /** The current run: it ends when the server is closed, or fails when the consumer fails. */
+    @Override
+    public synchronized CompletionStage<Void> whenStopped() {
+        return run;
+    }
+
+    private void serve(KafkaConsumer<String, byte[]> requests, KafkaProducer<String, byte[]> replies,
+                       CompletableFuture<Void> current) {
+        Throwable failure = null;
         try {
             while (running) {
                 var records = requests.poll(Duration.ofMillis(200));
@@ -116,11 +138,18 @@ public final class KafkaServer implements AutoCloseable {
         } catch (WakeupException e) {
             // close() stops the loop
         } catch (RuntimeException e) {
+            failure = e;
             LOGGER.log(System.Logger.Level.ERROR, "The FxMap Kafka server stopped.", e);
         } finally {
-            requests.close();
-            replies.close(Duration.ofSeconds(5));
+            try {
+                requests.close();
+                replies.close(Duration.ofSeconds(5));
+            } catch (RuntimeException e) {
+                LOGGER.log(System.Logger.Level.WARNING, "The Kafka clients of the server did not close.", e);
+            }
             running = false;
+            if (failure == null) current.complete(null);
+            else current.completeExceptionally(failure);
         }
     }
 
@@ -163,12 +192,19 @@ public final class KafkaServer implements AutoCloseable {
         }
         var requests = consumer;
         if (requests != null) requests.wakeup();
-        if (running != null) {
-            try {
-                running.join(Duration.ofSeconds(15));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+        join(running);
+    }
+
+    private void awaitLoop() {
+        join(loop);
+    }
+
+    private static void join(Thread thread) {
+        if (thread == null || thread == Thread.currentThread()) return;
+        try {
+            thread.join(Duration.ofSeconds(15));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

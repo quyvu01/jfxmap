@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: Spring Boot auto-configuration of the mapper, handlers and transports"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
@@ -28,6 +30,7 @@ dependencies {
     compileOnly(project(":jfxmap-sqs"))
     compileOnly(project(":jfxmap-azure-servicebus"))
     compileOnly(project(":jfxmap-graphql"))
+    compileOnly(project(":jfxmap-opentelemetry"))
     compileOnly(platform(libs.spring.boot.dependencies))
     compileOnly(libs.spring.graphql)
     compileOnly(libs.spring.web)
@@ -50,6 +53,9 @@ dependencies {
     testImplementation(project(":jfxmap-sqs"))
     testImplementation(project(":jfxmap-azure-servicebus"))
     testImplementation(project(":jfxmap-graphql"))
+    testImplementation(project(":jfxmap-opentelemetry"))
+    testImplementation(libs.opentelemetry.sdk)
+    testImplementation(libs.opentelemetry.sdk.testing)
     testImplementation(libs.spring.boot.graphql)
     testImplementation(libs.spring.web)
     // The integration tests run the transports against real brokers in Docker

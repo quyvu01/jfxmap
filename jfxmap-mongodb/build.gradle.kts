@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: a MongoDB query handler"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

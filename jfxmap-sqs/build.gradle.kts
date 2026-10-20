@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: the AWS SQS transport, compatible with FxMap.Aws.Sqs"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

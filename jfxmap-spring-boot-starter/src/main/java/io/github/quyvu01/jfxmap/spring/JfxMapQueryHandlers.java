@@ -3,6 +3,8 @@ package io.github.quyvu01.jfxmap.spring;
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.fluent.EntityConfigureOf;
+import io.github.quyvu01.jfxmap.pipeline.Pipelines;
+import io.github.quyvu01.jfxmap.pipeline.ReceiveBehavior;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 
 import java.util.Collection;
@@ -10,10 +12,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 
 /**
  * The keys this application owns, each with its {@link QueryHandler}: the {@code QueryHandler} beans, then a handler
  * from the first {@link EntityQueryHandlerFactory} that holds the entity of each other {@link EntityConfigureOf} bean.
+ * Each one answers through the {@link ReceiveBehavior} beans, inside the telemetry when there is some.
  */
 public final class JfxMapQueryHandlers {
     private static final System.Logger LOGGER = System.getLogger(JfxMapQueryHandlers.class.getName());
@@ -25,6 +29,17 @@ public final class JfxMapQueryHandlers {
      */
     public JfxMapQueryHandlers(Collection<? extends QueryHandler> handlers, Collection<? extends EntityConfigureOf<?>> configs,
                                Collection<? extends EntityQueryHandlerFactory> factories) {
+        this(handlers, configs, factories, List.of(), UnaryOperator.identity());
+    }
+
+    /**
+     * @param behaviors  run around each handler, in their order
+     * @param instrument puts telemetry around each handler with its behaviors
+     * @throws DistributedMapException.DistributedKeyAssignedToMultipleEntities when two handlers share a key
+     */
+    public JfxMapQueryHandlers(Collection<? extends QueryHandler> handlers, Collection<? extends EntityConfigureOf<?>> configs,
+                               Collection<? extends EntityQueryHandlerFactory> factories,
+                               List<? extends ReceiveBehavior> behaviors, UnaryOperator<QueryHandler> instrument) {
         var byKey = new LinkedHashMap<DistributedKeyRef, QueryHandler>();
         for (var handler : handlers) add(byKey, handler);
         for (var config : configs) {
@@ -36,6 +51,7 @@ public final class JfxMapQueryHandlers {
                     + ": the distributed key " + config.key() + " is not answered. Add jfxmap-jpa with the entity in "
                     + "the persistence unit, or declare a QueryHandler bean.");
         }
+        byKey.replaceAll((key, handler) -> instrument.apply(Pipelines.receive(handler, behaviors)));
         this.handlers = Map.copyOf(byKey);
     }
 

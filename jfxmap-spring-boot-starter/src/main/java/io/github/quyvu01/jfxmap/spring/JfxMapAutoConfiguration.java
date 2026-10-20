@@ -21,6 +21,10 @@ import io.github.quyvu01.jfxmap.kafka.KafkaServer;
 import io.github.quyvu01.jfxmap.mongodb.MongoQueryHandler;
 import io.github.quyvu01.jfxmap.nats.NatsRequestClient;
 import io.github.quyvu01.jfxmap.nats.NatsServer;
+import io.github.quyvu01.jfxmap.opentelemetry.JfxMapTelemetry;
+import io.github.quyvu01.jfxmap.pipeline.ReceiveBehavior;
+import io.github.quyvu01.jfxmap.pipeline.RetryPolicy;
+import io.github.quyvu01.jfxmap.pipeline.SendBehavior;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqRequestClient;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqServer;
@@ -29,6 +33,8 @@ import io.github.quyvu01.jfxmap.sqs.SqsServer;
 import io.nats.client.Connection;
 import io.nats.client.Nats;
 import io.nats.client.Options;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import jakarta.persistence.EntityManagerFactory;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -63,6 +69,7 @@ import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 /**
  * Wires jfxmap into a Spring Boot application (FxMap's {@code AddFxMap(...)}).
@@ -88,7 +95,12 @@ import java.util.Map;
  *       {@code MongoCollection} bean gets a {@link MongoQueryHandler}.</li>
  * </ul>
  *
- * A {@link RequestClient} bean of the application replaces the transports' clients; the owned keys are still
+ * <p>Around the requests: the {@link SendBehavior} beans and the retry policy ({@code jfxmap.retry.*}, or a
+ * {@link RetryPolicy} bean) on the client side, the {@link ReceiveBehavior} beans around each handler; with
+ * jfxmap-opentelemetry, spans and metrics on both sides ({@code jfxmap.telemetry.enabled=false} turns them off). The
+ * transport servers run under a supervisor that starts them again when they fail ({@code jfxmap.supervisor.*}).
+ *
+ * <p>A {@link RequestClient} bean of the application replaces the transports' clients; the owned keys are still
  * answered in process. Configure one transport for the client side: the first one configured (gRPC, NATS, RabbitMQ,
  * Kafka, SQS, Service Bus) sends the requests.
  */
@@ -99,23 +111,69 @@ public class JfxMapAutoConfiguration {
     @ConditionalOnMissingBean
     public JfxMapQueryHandlers jfxMapQueryHandlers(ObjectProvider<QueryHandler> handlers,
                                                    ObjectProvider<EntityConfigureOf<?>> configs,
-                                                   ObjectProvider<EntityQueryHandlerFactory> factories) {
+                                                   ObjectProvider<EntityQueryHandlerFactory> factories,
+                                                   ObjectProvider<ReceiveBehavior> behaviors,
+                                                   ObjectProvider<JfxMapInstrumentation> instrumentation) {
+        var instrument = instrumentation.getIfUnique();
         return new JfxMapQueryHandlers(handlers.orderedStream().toList(), configs.orderedStream().toList(),
-                factories.orderedStream().toList());
+                factories.orderedStream().toList(), behaviors.orderedStream().toList(),
+                instrument == null ? UnaryOperator.identity() : instrument::instrument);
     }
 
     @Bean
     @ConditionalOnMissingBean
     public DistributedMapper jfxMapDistributedMapper(JfxMapProperties properties, JfxMapQueryHandlers handlers,
                                                      ObjectProvider<ProfileOf<?>> profiles,
-                                                     ObjectProvider<RequestClient> remote, BeanFactory beanFactory) {
+                                                     ObjectProvider<RequestClient> remote,
+                                                     ObjectProvider<SendBehavior> behaviors,
+                                                     ObjectProvider<RetryPolicy> retryPolicy,
+                                                     ObjectProvider<JfxMapInstrumentation> instrumentation,
+                                                     BeanFactory beanFactory) {
+        var client = remote.getIfUnique();
+        var instrument = instrumentation.getIfUnique();
+        if (client != null && instrument != null) client = instrument.instrument(client);
         var builder = FxMap.builder()
                 .addProfiles(profiles.orderedStream().toArray(ProfileOf<?>[]::new))
-                .requestClient(new JfxMapRequestClient(handlers, remote.getIfUnique()))
+                .requestClient(new JfxMapRequestClient(handlers, client))
+                .addSendBehaviors(behaviors.orderedStream().toArray(SendBehavior[]::new))
                 .maxNestingDepth(properties.getMaxNestingDepth())
                 .services(type -> beanFactory.getBeanProvider(type).getIfAvailable());
+        var retry = retryPolicy.getIfUnique(() -> properties.getRetry().toPolicy());
+        if (retry != null) builder.retryPolicy(retry);
         if (properties.isThrowIfException()) builder.throwIfException();
         return builder.build();
+    }
+
+    /** jfxmap-opentelemetry: traces and measures the requests with the application's OpenTelemetry. */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass({JfxMapTelemetry.class, OpenTelemetry.class})
+    @ConditionalOnProperty(value = "jfxmap.telemetry.enabled", matchIfMissing = true)
+    static class TelemetryConfiguration {
+        /**
+         * Backed by the application's {@code OpenTelemetry} bean, else by the global one (the Java agent's), which
+         * records nothing when no SDK is set up.
+         */
+        @Bean
+        @ConditionalOnMissingBean
+        public JfxMapTelemetry jfxMapTelemetry(ObjectProvider<OpenTelemetry> openTelemetry) {
+            return JfxMapTelemetry.create(openTelemetry.getIfUnique(GlobalOpenTelemetry::get));
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public JfxMapInstrumentation jfxMapInstrumentation(JfxMapTelemetry telemetry) {
+            return new JfxMapInstrumentation() {
+                @Override
+                public RequestClient instrument(RequestClient client) {
+                    return telemetry.instrument(client);
+                }
+
+                @Override
+                public QueryHandler instrument(QueryHandler handler) {
+                    return telemetry.instrument(handler);
+                }
+            };
+        }
     }
 
     /** jfxmap-jpa: entities of the application's persistence unit. */
@@ -193,7 +251,7 @@ public class JfxMapAutoConfiguration {
             var nats = properties.getNats();
             var server = NatsServer.builder(connection, handlers.all()).topicPrefix(nats.getTopicPrefix())
                     .timeout(nats.getTimeout()).maxConcurrentProcessing(nats.getMaxConcurrentProcessing()).build();
-            return new JfxMapTransportServer("nats", server::start, server::close, server::isRunning);
+            return new JfxMapTransportServer("nats", server, properties.getSupervisor().toOptions());
         }
 
         @Bean
@@ -226,7 +284,7 @@ public class JfxMapAutoConfiguration {
                             applicationName(properties, environment, null), handlers.all())
                     .timeout(rabbitmq.getTimeout()).channelPoolSize(rabbitmq.getChannelPoolSize())
                     .maxConcurrentProcessing(rabbitmq.getMaxConcurrentProcessing()).build();
-            return new JfxMapTransportServer("rabbitmq", server::start, server::close, server::isRunning);
+            return new JfxMapTransportServer("rabbitmq", server, properties.getSupervisor().toOptions());
         }
 
         @Bean(destroyMethod = "close")
@@ -253,7 +311,7 @@ public class JfxMapAutoConfiguration {
                     .maxConcurrentProcessing(kafka.getMaxConcurrentProcessing());
             kafka.getProperties().forEach(builder::property);
             var server = builder.build();
-            return new JfxMapTransportServer("kafka", server::start, server::close, server::isRunning);
+            return new JfxMapTransportServer("kafka", server, properties.getSupervisor().toOptions());
         }
 
         @Bean(destroyMethod = "close")
@@ -294,7 +352,7 @@ public class JfxMapAutoConfiguration {
             var sqs = properties.getSqs();
             var server = SqsServer.builder(sqsClient, handlers.all()).timeout(sqs.getTimeout())
                     .waitTime(sqs.getWaitTime()).maxConcurrentProcessing(sqs.getMaxConcurrentProcessing()).build();
-            return new JfxMapTransportServer("sqs", server::start, server::close, server::isRunning);
+            return new JfxMapTransportServer("sqs", server, properties.getSupervisor().toOptions());
         }
 
         @Bean(destroyMethod = "close")
@@ -333,7 +391,7 @@ public class JfxMapAutoConfiguration {
                 builder.administration(new ServiceBusAdministrationClientBuilder()
                         .connectionString(servicebus.getConnectionString()).buildClient());
             var server = builder.build();
-            return new JfxMapTransportServer("servicebus", server::start, server::close, server::isRunning);
+            return new JfxMapTransportServer("servicebus", server, properties.getSupervisor().toOptions());
         }
 
         @Bean(destroyMethod = "close")

@@ -6,3 +6,5 @@ out/
 .vscode/
 .DS_Store
 .claude/
+interop/dotnet-probe/bin/
+interop/dotnet-probe/obj/

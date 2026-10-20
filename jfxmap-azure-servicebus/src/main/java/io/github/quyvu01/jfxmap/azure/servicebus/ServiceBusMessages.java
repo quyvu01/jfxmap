@@ -32,6 +32,16 @@ final class ServiceBusMessages {
         return headers;
     }
 
+    /**
+     * Whether a header can go as an application property. The W3C trace context ({@code traceparent},
+     * {@code tracestate}) does not: FxMap 5.1.1 sends and reads it as bytes, which Service Bus refuses ("unsupported
+     * type System.Byte[]", for its .NET client as well), and a string would make an FxMap server fail on its cast to
+     * bytes. A trace stops at Service Bus, as it does between two FxMap services.
+     */
+    static boolean isSent(String header) {
+        return !"traceparent".equals(header) && !"tracestate".equals(header);
+    }
+
     /** Whether a failure says that a queue does not exist. */
     static boolean isMissingEntity(Throwable failure) {
         for (var current = failure; current != null; current = current.getCause())

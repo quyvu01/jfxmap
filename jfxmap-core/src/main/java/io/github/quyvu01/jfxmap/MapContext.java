@@ -1,5 +1,6 @@
 package io.github.quyvu01.jfxmap;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
@@ -26,6 +27,18 @@ public final class MapContext {
     /** The headers sent with every request of this mapping call. */
     public Map<String, String> headers() {
         return headers;
+    }
+
+    /**
+     * The same context with one more header, or with a new value for it; a {@code null} value removes it. The
+     * context itself does not change.
+     */
+    public MapContext withHeader(String name, String value) {
+        Objects.requireNonNull(name, "name");
+        var copy = new LinkedHashMap<>(headers);
+        if (value == null) copy.remove(name);
+        else copy.put(name, value);
+        return new MapContext(copy, services);
     }
 
     /** The service of the given type, or {@code null} when none is registered. */

@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: the Kafka transport, compatible with FxMap.Kafka"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

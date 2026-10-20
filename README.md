@@ -6,7 +6,9 @@ Given a DTO with a foreign key (`userId`), jfxmap fills its related properties (
 service that owns the entity, batching the ids of every object into one request per entity type.
 
 > Status: early. Ported: the core, the expression language, the JPA and MongoDB data providers, the gRPC, NATS,
-> RabbitMQ, Kafka, AWS SQS and Azure Service Bus transports, a GraphQL integration and a Spring Boot starter.
+> RabbitMQ, Kafka, AWS SQS and Azure Service Bus transports, a GraphQL integration, a Spring Boot starter, the send
+> and receive pipelines with retries, the supervision of the servers, OpenTelemetry tracing and metrics, and the
+> compile-time validation of expressions.
 
 ## Modules
 
@@ -24,6 +26,8 @@ service that owns the entity, batching the ids of every object into one request 
 | `jfxmap-graphql` | FxMap.HotChocolate's counterpart, on graphql-java: `JfxMapGraphQl` resolves the mapped fields of a type through a DataLoader, so a query asks once per key for the fields it selects |
 | `jfxmap-spring-boot-starter` | Auto-configuration for Spring Boot 4.1: profile and entity configuration beans, JPA and MongoDB handlers, the server and client of each transport from `jfxmap.*` properties |
 | `jfxmap-expression` | The FxMap expression language (`Orders:where(Status = 'Done'):sum(Total)`): tokenizer, parser to a syntax tree, and an in-memory evaluator over records, JavaBeans, Maps and collections. See [expression.md](https://github.com/quyvu01/FxMap/blob/main/docs/expression.md) for the syntax |
+| `jfxmap-opentelemetry` | FxMap's telemetry for OpenTelemetry: spans and metrics around the clients and handlers, with the W3C trace context carried over the transports as FxMap carries it |
+| `jfxmap-validation` | FxMap.Analyzers' counterpart: the javac plugin `JfxMapExpressions` reports an invalid expression of a profile as a compile error (`OFX001`), and `JfxMapValidator` checks profiles and entity configurations at startup |
 
 ## Usage
 
@@ -130,8 +134,162 @@ Then inject `DistributedMapper`. [samples/](samples/README.md) has a user servic
 To call a .NET FxMap service, or be called by one, use a string key on both sides: `useDistributedKey("UserOf")` in
 Java and `UseDistributedKey("UserOf")` in .NET. The subjects, exchanges, queues, topics, headers and JSON match what
 FxMap 5.1.1 sends; [interop/](interop/) checks it against a real .NET FxMap service on NATS, RabbitMQ, Kafka, SQS
-(LocalStack) and Service Bus (its emulator), in both directions (`dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out`, then run
+(LocalStack) and Service Bus (its emulator), in both directions, traces included (`dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out`, then run
 `./gradlew :interop:test` with `JFXMAP_DOTNET_PROBE="dotnet $PWD/interop/dotnet-probe/out/DotnetProbe.dll"`).
+
+## Validation
+
+`jfxmap-validation` checks expressions before the first mapping does, in two opt-in ways.
+
+**At compile time**, the javac plugin `JfxMapExpressions` (FxMap.Analyzers' `OFX001`) parses the expression given to
+`map(target, "...")`, `expression("...")` and `otherwise("...")` when it is a string literal or a compile-time
+constant, and reports one that does not parse as a compile error on the literal:
+
+```
+OrderProfile.java:15: error: OFX001: Expression 'Country{Name}' is invalid: Projection requires '.' before '{' at position 7
+```
+
+The calls are matched by the method javac resolves, so `Stream.map(...)` or another class's `map(x, "...")` is never
+reported. Null, blank and non-constant expressions are not checked. Put the module on the annotation processor path
+and pass `-Xplugin:JfxMapExpressions` (`-Xplugin:JfxMapExpressions warn` makes it a warning, which `-Werror` still
+turns into a failure). Gradle:
+
+```kotlin
+dependencies {
+    annotationProcessor("io.github.quyvu01:jfxmap-validation:0.1.0-SNAPSHOT")
+}
+
+tasks.compileJava {
+    options.compilerArgs.add("-Xplugin:JfxMapExpressions")
+}
+```
+
+Maven:
+
+```xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-compiler-plugin</artifactId>
+    <configuration>
+        <annotationProcessorPaths>
+            <path>
+                <groupId>io.github.quyvu01</groupId>
+                <artifactId>jfxmap-validation</artifactId>
+                <version>0.1.0-SNAPSHOT</version>
+            </path>
+        </annotationProcessorPaths>
+        <compilerArgs>
+            <arg>-Xplugin:JfxMapExpressions</arg>
+        </compilerArgs>
+    </configuration>
+</plugin>
+```
+
+On the processor path the plugin needs only `jfxmap-expression`. [samples/order-service](samples/order-service/build.gradle.kts)
+compiles with it.
+
+**At startup**, `JfxMapValidator` checks what the plugin cannot see, such as an expression built from configuration:
+
+```java
+List<ValidationProblem> problems = JfxMapValidator.validate(profiles);  // ProfileOf<?>... or an Iterable
+JfxMapValidator.validateEntities(entityConfigurations);                 // EntityConfigureOf<?>...
+JfxMapValidator.validateOrThrow(profiles, entityConfigurations);        // JfxMapValidationException with every problem
+```
+
+A profile is checked by declaring its rules, planning them as the mapper does (readable keys, writable targets, no
+cycle) and parsing each fixed expression (the functions of a conditional rule are not called). An entity
+configuration is checked by running its `configure()` and checking that each exposed name is a plain name an
+expression can use. Each `ValidationProblem` names the class, the property, the expression and what is wrong. Nothing
+runs it by itself: the Java parser may reject a few constructs that FxMap's parser accepts, so call it where it fits,
+in a test or at startup.
+
+## Around the requests
+
+### Behaviors and retries
+
+FxMap's send and receive pipelines: a `SendBehavior` runs around each request a client sends (once per attempt), a
+`ReceiveBehavior` around each request a handler answers. Each one gets a `RequestContext` (the key, the ids and
+expressions, the headers) and calls `next.proceed(...)`, with the same context or a changed one:
+
+```java
+SendBehavior tenant = (request, next) -> next.proceed(request.withHeader("x-tenant", currentTenant()));
+ReceiveBehavior audit = (request, next) -> {
+    log.info("{} asked for {} ids", request.key(), request.request().selectorIds().size());
+    return next.proceed(request);
+};
+
+DistributedMapper mapper = FxMap.builder()
+        .addProfiles(new UserSummaryProfile())
+        .requestClient(transportClient)
+        .addSendBehaviors(tenant)
+        .retryPolicy(RetryPolicy.retries(3)                       // FxMap's SetRetryPolicy
+                .exponentialDelay(Duration.ofMillis(200), Duration.ofSeconds(5))
+                .shouldRetry(e -> !(e instanceof DistributedMapException.ReceivedFault)))
+        .build();
+
+QueryHandler handler = Pipelines.receive(usersHandler, List.of(audit));
+```
+
+The retry policy runs outside the send behaviors, so they run again on each attempt. JVM errors
+(`OutOfMemoryError`...) are never retried.
+
+### Supervision
+
+Each transport server (`NatsServer`, `RabbitMqServer`, `KafkaServer`, `SqsServer`, `ServiceBusServer`) is a
+`RequestServer`, whose `whenStopped()` fails when the server stops by itself: its RabbitMQ or SQS queue deleted, its
+Kafka consumer failing, its Service Bus queue missing. A `ServerSupervisor` (FxMap's) starts it again, with FxMap's
+defaults: one-for-one, at most 32 restarts a minute, a backoff from 1 second doubling up to 5 minutes, and a circuit
+breaker that holds the restarts for a minute after 3 failures in a row:
+
+```java
+ServerSupervisor supervisor = new ServerSupervisor(SupervisorOptions.builder()
+        .strategy(SupervisionStrategy.ONE_FOR_ONE)               // or ONE_FOR_ALL, REST_FOR_ONE
+        .directive(AuthenticationFailureException.class, SupervisorDirective.STOP)
+        .build())
+        .register("rabbitmq", rabbitMqServer)
+        .register("sqs", sqsServer)
+        .onHealthChange(change -> log.warn("{}: {} -> {}", change.serverId(), change.previous(), change.current()));
+supervisor.start();
+```
+
+`states()` gives the health (healthy, degraded, unhealthy, circuit open, stopped), the restart count and the last
+failure of each server.
+
+### Telemetry
+
+`jfxmap-opentelemetry` is FxMap's `ActivitySource` for OpenTelemetry: a client span `fxmap.request` around each
+request a client sends and a server span `fxmap.process` around each request a handler answers, with FxMap's
+attributes (`fxmap.distributed_key`, `fxmap.transport`, `fxmap.expressions`, `fxmap.selector_count`,
+`fxmap.item_count`, `messaging.system`, `db.system`...), and the histograms `fxmap.client.request.duration` and
+`fxmap.server.request.duration`. The trace travels in the W3C `traceparent` header, where FxMap sends and reads it, so a
+trace goes on from a Java service into a .NET one and back ([interop/](interop/) checks it on each transport):
+
+```java
+JfxMapTelemetry telemetry = JfxMapTelemetry.create(openTelemetry);
+RequestClient client = telemetry.instrument(NatsRequestClient.builder(connection).build());
+NatsServer server = NatsServer.builder(connection, telemetry.instrument(handlers)).build().start();
+```
+
+Azure Service Bus is the exception: FxMap 5.1.1 sends the trace context there in bytes, which Service Bus refuses
+("unsupported type System.Byte[]", the emulator at least), so a traced .NET client fails on it. jfxmap leaves the
+trace context out on Service Bus, and the server starts a trace of its own.
+
+### With Spring Boot
+
+The starter puts the `SendBehavior` and `ReceiveBehavior` beans around the requests, and supervises the transport
+servers it starts: a server that cannot start or that fails is started again in the background instead of failing the
+application. With `jfxmap-opentelemetry` on the classpath, it traces and measures the requests with the application's
+`OpenTelemetry` bean (or the global one, set by the Java agent):
+
+```properties
+jfxmap.retry.retries=3                  # or a RetryPolicy bean
+jfxmap.retry.delay=200ms
+jfxmap.retry.max-delay=5s               # with it, the delay doubles at each retry up to this maximum
+jfxmap.supervisor.strategy=one-for-one  # also max-restarts, max-restart-window, initial-backoff, max-backoff,
+                                        # backoff-multiplier, circuit-breaker, circuit-breaker-threshold,
+                                        # circuit-breaker-reset-time; enabled=false to start the servers directly
+jfxmap.telemetry.enabled=true
+```
 
 ## Build
 
@@ -143,6 +301,55 @@ Java 21 and the Gradle wrapper:
 
 The integration tests start MongoDB, NATS, RabbitMQ, Kafka, LocalStack and the Service Bus emulator with
 Testcontainers, so they need Docker.
+
+## BOM
+
+`io.github.quyvu01:jfxmap-bom` holds the version of every jfxmap module, so the modules are declared without one.
+Gradle:
+
+```kotlin
+dependencies {
+    implementation(platform("io.github.quyvu01:jfxmap-bom:0.1.0-SNAPSHOT"))
+    implementation("io.github.quyvu01:jfxmap-spring-boot-starter")
+    implementation("io.github.quyvu01:jfxmap-grpc")
+}
+```
+
+Maven:
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.github.quyvu01</groupId>
+      <artifactId>jfxmap-bom</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+The modules are not on Maven Central yet: `./gradlew publishToMavenLocal` puts them in `~/.m2`, and
+`./gradlew publishAllPublicationsToStagingRepository` lays out the bundle for the Central Portal in
+`build/staging-deploy` (signed when `ORG_GRADLE_PROJECT_signingInMemoryKey` and
+`ORG_GRADLE_PROJECT_signingInMemoryKeyPassword` are set). Every `jfxmap-*` project is published, and listed in the
+BOM, without a line of its own; `./gradlew build` checks the generated POMs (`:jfxmap-bom:verifyPoms`).
+
+## Benchmarks
+
+[benchmarks/](benchmarks/) has JMH benchmarks of the expression parser (simple, medium and complex expressions), of
+in-memory mapping (`DistributedMapper` over `LocalRequestClient` and `InMemoryQueryHandler`, 1, 100 and 10,000 DTOs
+with navigations, an aggregation, a chained rule and nested DTOs) and of the JSON wire messages. `./gradlew build`
+compiles them and runs their test, not the benchmarks:
+
+```sh
+./gradlew :benchmarks:jmhJar
+java -jar benchmarks/build/libs/benchmarks-jmh.jar                     # all, with the default iterations
+java -jar benchmarks/build/libs/benchmarks-jmh.jar MappingBenchmark -p dtos=100 -wi 1 -i 3 -f 1   # one, briefly
+./gradlew :benchmarks:jmh -PjmhIncludes=ExpressionParser               # or through Gradle
+```
 
 ## Expressions
 

@@ -29,7 +29,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Sends requests over Azure Service Bus (FxMap's OpenAzureServiceBusClient and {@code AddAzureServiceBus}): each
  * request goes to the request queue of its key ({@link ServiceBusNames}) with a correlation id, the reply queue of the
  * key as {@code ReplyTo}, the session id of this client, and the headers of the mapping call as application
- * properties. The owner replies on the reply queue in the same session, which this client holds: the clients of a key
+ * properties, but the W3C trace context: Service Bus refuses it as FxMap sends it, in bytes. The owner replies on the
+ * reply queue in the same session, which this client holds: the clients of a key
  * share its reply queue, each reading its own session.
  *
  * <p>A key whose request queue does not exist (no service owns it) fails at once. The owner creates both queues.
@@ -83,7 +84,8 @@ public final class ServiceBusRequestClient implements RequestClient, AutoCloseab
                     .setReplyTo(replyQueue)
                     .setSessionId(sessionId);
             context.headers().forEach((name, value) -> {
-                if (value != null) message.getApplicationProperties().putIfAbsent(name, value);
+                if (value != null && ServiceBusMessages.isSent(name))
+                    message.getApplicationProperties().putIfAbsent(name, value);
             });
             sender(ServiceBusNames.requestQueue(prefix, key)).sendMessage(message).toFuture()
                     .whenComplete((ignored, failure) -> {
@@ -171,6 +173,11 @@ public final class ServiceBusRequestClient implements RequestClient, AutoCloseab
                 LOGGER.log(System.Logger.Level.WARNING, "A Service Bus session receiver did not close.", e);
             }
         }
+    }
+
+    @Override
+    public String transport() {
+        return "azureservicebus";
     }
 
     public static final class Builder {

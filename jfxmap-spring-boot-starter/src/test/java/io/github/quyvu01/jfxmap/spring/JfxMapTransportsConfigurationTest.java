@@ -1,5 +1,6 @@
 package io.github.quyvu01.jfxmap.spring;
 
+import io.github.quyvu01.jfxmap.RequestServer;
 import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusRequestClient;
 import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusServer;
 import io.github.quyvu01.jfxmap.graphql.JfxMapGraphQl;
@@ -13,6 +14,8 @@ import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqRequestClient;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqServer;
 import io.github.quyvu01.jfxmap.sqs.SqsRequestClient;
 import io.github.quyvu01.jfxmap.sqs.SqsServer;
+import io.github.quyvu01.jfxmap.supervision.ServerHealth;
+import io.github.quyvu01.jfxmap.supervision.SupervisorOptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.FilteredClassLoader;
@@ -21,7 +24,8 @@ import org.springframework.mock.env.MockEnvironment;
 import software.amazon.awssdk.services.sqs.SqsClient;
 
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -141,24 +145,87 @@ class JfxMapTransportsConfigurationTest {
 
     @Test
     void theTransportServerStartsAndStopsItsServer() {
-        var running = new AtomicBoolean();
-        var starts = new AtomicInteger();
-        var server = new JfxMapTransportServer("nats", () -> {
+        var server = new FakeServer();
+        var transport = new JfxMapTransportServer("nats", server, null);
+
+        transport.start();
+        assertThat(transport.isRunning()).isTrue();
+        transport.stop();
+
+        assertThat(transport.isRunning()).isFalse();
+        assertThat(server.starts).hasValue(1);
+        assertThat(transport.getName()).isEqualTo("nats");
+        assertThat(transport.getServer()).isSameAs(server);
+        assertThat(transport.getSupervisor()).isEmpty();
+        assertThat(transport.getState()).isEmpty();
+        assertThat(transport).hasToString("JfxMapTransportServer[nats]");
+        assertThatThrownBy(() -> new JfxMapTransportServer(null, server, null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new JfxMapTransportServer("nats", null, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void aSupervisedTransportServerIsStartedAgainWhenItFails() throws Exception {
+        var server = new FakeServer();
+        var options = SupervisorOptions.builder().initialBackoff(Duration.ofMillis(10)).build();
+        var transport = new JfxMapTransportServer("nats", server, options);
+        try {
+            transport.start();
+            assertThat(transport.isRunning()).isTrue();
+            assertThat(transport.getSupervisor()).isPresent();
+            assertThat(transport.getState()).hasValueSatisfying(
+                    state -> assertThat(state.health()).isEqualTo(ServerHealth.HEALTHY));
+
+            server.fail(new IllegalStateException("queue deleted"));
+
+            var deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+            while (server.starts.get() < 2 && System.nanoTime() < deadline) Thread.onSpinWait();
+            assertThat(server.starts).hasValue(2);
+            transport.stop();
+            assertThat(transport.isRunning()).isFalse();
+            assertThat(server.isRunning()).isFalse();
+        } finally {
+            transport.destroy();
+        }
+    }
+
+    /** A server that runs until it is closed or made to fail. */
+    private static final class FakeServer implements RequestServer {
+        final AtomicInteger starts = new AtomicInteger();
+        private CompletableFuture<Void> run;
+
+        @Override
+        public synchronized RequestServer start() {
+            if (run != null) return this;
             starts.incrementAndGet();
-            running.set(true);
-        }, () -> running.set(false), running::get);
+            run = new CompletableFuture<>();
+            return this;
+        }
 
-        server.start();
-        assertThat(server.isRunning()).isTrue();
-        server.stop();
+        @Override
+        public synchronized boolean isRunning() {
+            return run != null;
+        }
 
-        assertThat(server.isRunning()).isFalse();
-        assertThat(starts).hasValue(1);
-        assertThat(server.getName()).isEqualTo("nats");
-        assertThat(server).hasToString("JfxMapTransportServer[nats]");
-        assertThatThrownBy(() -> new JfxMapTransportServer(null, () -> {
-        }, () -> {
-        }, () -> true)).isInstanceOf(NullPointerException.class);
+        @Override
+        public synchronized CompletionStage<Void> whenStopped() {
+            return run != null ? run : CompletableFuture.completedFuture(null);
+        }
+
+        synchronized void fail(Throwable failure) {
+            var ended = run;
+            run = null;
+            ended.completeExceptionally(failure);
+        }
+
+        @Override
+        public synchronized void close() {
+            if (run == null) return;
+            var ended = run;
+            run = null;
+            ended.complete(null);
+        }
     }
 
     @Test

@@ -6,7 +6,10 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.DefaultConsumer;
 import com.rabbitmq.client.Envelope;
+import com.rabbitmq.client.Recoverable;
+import com.rabbitmq.client.ShutdownSignalException;
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
+import io.github.quyvu01.jfxmap.RequestServer;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.wire.DotNetKeyNames;
@@ -19,6 +22,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -27,6 +32,10 @@ import java.util.concurrent.TimeoutException;
  * the queue on {@code channelPoolSize} channels (5 by default, FxMap's {@code ChannelPoolSize}). Each request is
  * answered with a {@code Result} on its reply queue, with its correlation id, then acknowledged.
  *
+ * <p>The server fails, and stops, when RabbitMQ cancels its consumers (its queue was deleted) or closes a consumer
+ * channel for an error; a {@link io.github.quyvu01.jfxmap.supervision.ServerSupervisor} starts it again, which declares
+ * the queue again. A lost connection is not a failure: the client of RabbitMQ recovers it, consumers included.
+ *
  * <p>The application name must differ between services: two services with the same name share one queue, and
  * each gets the requests of the other.
  *
@@ -34,7 +43,7 @@ import java.util.concurrent.TimeoutException;
  * RabbitMqServer server = RabbitMqServer.builder(connection, "user-service", handlers).build().start();
  * }</pre>
  */
-public final class RabbitMqServer implements AutoCloseable {
+public final class RabbitMqServer implements RequestServer {
     public static final int DEFAULT_CHANNEL_POOL_SIZE = 5;
     /** FxMap's {@code MaxConcurrentProcessing}: the unacknowledged requests of each channel. */
     public static final int DEFAULT_MAX_CONCURRENT_PROCESSING = 128;
@@ -47,6 +56,7 @@ public final class RabbitMqServer implements AutoCloseable {
     private final int channelPoolSize;
     private final int maxConcurrentProcessing;
     private final List<Channel> channels = new ArrayList<>();
+    private CompletableFuture<Void> run = CompletableFuture.completedFuture(null);
 
     private RabbitMqServer(Builder builder) {
         this.connection = builder.connection;
@@ -81,8 +91,11 @@ public final class RabbitMqServer implements AutoCloseable {
      *
      * @throws UncheckedIOException when RabbitMQ refuses a declaration
      */
+    @Override
     public synchronized RabbitMqServer start() {
         if (!channels.isEmpty() || responder.keys().isEmpty()) return this;
+        var current = new CompletableFuture<Void>();
+        run = current;
         try {
             try (var declare = connection.createChannel()) {
                 declare.queueDeclare(queue, false, false, false, null);
@@ -102,18 +115,55 @@ public final class RabbitMqServer implements AutoCloseable {
                                                byte[] body) {
                         receive(getChannel(), envelope, properties, body);
                     }
+
+                    @Override
+                    public void handleCancel(String consumerTag) {
+                        failed(current, new IllegalStateException("RabbitMQ cancelled the consumer of " + queue
+                                                                  + " (was the queue deleted?)."));
+                    }
+
+                    @Override
+                    public void handleShutdownSignal(String consumerTag, ShutdownSignalException signal) {
+                        // A connection that recovers brings its consumers back; a channel closed for an error does not
+                        if (!signal.isInitiatedByApplication()
+                            && (!signal.isHardError() || !(connection instanceof Recoverable)))
+                            failed(current, signal);
+                    }
                 });
             }
         } catch (IOException | TimeoutException e) {
             close();
+            run = CompletableFuture.completedFuture(null);
             throw new UncheckedIOException("The FxMap RabbitMQ server could not start on " + queue,
                     e instanceof IOException io ? io : new IOException(e));
         }
         return this;
     }
 
+    @Override
     public synchronized boolean isRunning() {
         return !channels.isEmpty();
+    }
+
+    /**
+     * The current run: it ends when the server is closed, or fails when RabbitMQ cancels a consumer or closes a
+     * consumer channel for an error.
+     */
+    @Override
+    public synchronized CompletionStage<Void> whenStopped() {
+        return run;
+    }
+
+    // Off the thread of the consumer, which must not wait for its own channel to close
+    private void failed(CompletableFuture<Void> failedRun, Throwable cause) {
+        Thread.ofVirtual().name("jfxmap-rabbitmq-failure").start(() -> {
+            synchronized (this) {
+                if (run != failedRun || failedRun.isDone()) return;
+                LOGGER.log(System.Logger.Level.ERROR, "The FxMap RabbitMQ server of " + queue + " stopped.", cause);
+                closeChannels();
+            }
+            failedRun.completeExceptionally(cause);
+        });
     }
 
     private void receive(Channel channel, Envelope envelope, AMQP.BasicProperties properties, byte[] body) {
@@ -141,6 +191,11 @@ public final class RabbitMqServer implements AutoCloseable {
     /** Closes the consumer channels; the queue and the exchanges stay. */
     @Override
     public synchronized void close() {
+        closeChannels();
+        run.complete(null);
+    }
+
+    private void closeChannels() {
         for (var channel : channels) {
             if (!channel.isOpen()) continue;
             try {

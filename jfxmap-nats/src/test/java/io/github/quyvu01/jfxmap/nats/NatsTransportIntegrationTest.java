@@ -7,6 +7,7 @@ import io.github.quyvu01.jfxmap.MapContext;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.fluent.EntityConfigureOf;
 import io.github.quyvu01.jfxmap.fluent.ProfileOf;
+import io.github.quyvu01.jfxmap.pipeline.RetryPolicy;
 import io.github.quyvu01.jfxmap.provider.InMemoryQueryHandler;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.response.DataResponse;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -256,5 +258,44 @@ class NatsTransportIntegrationTest {
         connection.flush(Duration.ofSeconds(5));
         assertThat(request(NatsRequestClient.builder(connection).build(), USER_OF, Map.of(), (String) null).items())
                 .hasSize(2);
+    }
+
+    @Test
+    void retriesARequestUntilAServerAnswers() {
+        var retries = new AtomicInteger();
+        var mapper = FxMap.builder().addProfiles(new OrderDtoProfile())
+                .requestClient(NatsRequestClient.builder(connection).build())
+                .retryPolicy(RetryPolicy.retries(3).delay(Duration.ofMillis(100)).onRetry((failure, delay) -> {
+                    // Nobody answers the first attempt; the server is up for the second
+                    if (retries.incrementAndGet() == 1) {
+                        serve(NatsServer.builder(connection, List.of(users())));
+                        try {
+                            connection.flush(Duration.ofSeconds(5));
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    }
+                }))
+                .throwIfException().build();
+        var dtos = List.of(new OrderDto(1), new OrderDto(2));
+
+        mapper.map(dtos);
+
+        assertThat(dtos).extracting(d -> d.userName).containsExactly("Alice", "Bob");
+        assertThat(retries).hasValue(1);
+    }
+
+    @Test
+    void theRunOfTheServerEndsWhenItIsClosed() {
+        var server = NatsServer.builder(connection, List.of(users())).build().start();
+        var run = server.whenStopped().toCompletableFuture();
+        assertThat(run).isNotDone();
+
+        server.close();
+
+        assertThat(run).isCompletedWithValue(null);
+        assertThat(server.isRunning()).isFalse();
+        assertThat(server.start().whenStopped().toCompletableFuture()).isNotDone();
+        server.close();
     }
 }

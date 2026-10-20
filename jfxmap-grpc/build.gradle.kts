@@ -3,6 +3,8 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
+description = "FxMap for Java: the gRPC transport, compatible with FxMap.Grpc"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

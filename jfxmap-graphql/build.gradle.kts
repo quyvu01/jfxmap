@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: graphql-java integration resolving mapped fields through a DataLoader"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
