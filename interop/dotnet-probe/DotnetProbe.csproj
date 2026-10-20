@@ -14,6 +14,8 @@
     <PackageReference Include="FxMap.RabbitMq" Version="5.1.1" />
     <PackageReference Include="FxMap.Kafka" Version="5.1.1" />
     <PackageReference Include="FxMap.Grpc" Version="5.1.1" />
+    <PackageReference Include="FxMap.Aws.Sqs" Version="5.1.1" />
+    <PackageReference Include="FxMap.Azure.ServiceBus" Version="5.1.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.10" />
   </ItemGroup>

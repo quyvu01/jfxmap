@@ -25,6 +25,13 @@ dependencies {
     compileOnly(project(":jfxmap-nats"))
     compileOnly(project(":jfxmap-rabbitmq"))
     compileOnly(project(":jfxmap-kafka"))
+    compileOnly(project(":jfxmap-sqs"))
+    compileOnly(project(":jfxmap-azure-servicebus"))
+    compileOnly(project(":jfxmap-graphql"))
+    compileOnly(platform(libs.spring.boot.dependencies))
+    compileOnly(libs.spring.graphql)
+    compileOnly(libs.spring.web)
+    compileOnly(libs.reactor.core)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
@@ -40,12 +47,21 @@ dependencies {
     testImplementation(project(":jfxmap-nats"))
     testImplementation(project(":jfxmap-rabbitmq"))
     testImplementation(project(":jfxmap-kafka"))
+    testImplementation(project(":jfxmap-sqs"))
+    testImplementation(project(":jfxmap-azure-servicebus"))
+    testImplementation(project(":jfxmap-graphql"))
+    testImplementation(libs.spring.boot.graphql)
+    testImplementation(libs.spring.web)
     // The integration tests run the transports against real brokers in Docker
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.mongodb)
     testImplementation(libs.testcontainers.rabbitmq)
     testImplementation(libs.testcontainers.kafka)
+    testImplementation(libs.testcontainers.localstack)
+    testImplementation(libs.testcontainers.azure)
+    testImplementation(libs.testcontainers.mssqlserver)
+    testRuntimeOnly(libs.mssql.jdbc)
 }
 
 tasks.withType<JavaCompile>().configureEach {

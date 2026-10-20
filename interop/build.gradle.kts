@@ -16,6 +16,8 @@ dependencies {
     testImplementation(project(":jfxmap-nats"))
     testImplementation(project(":jfxmap-rabbitmq"))
     testImplementation(project(":jfxmap-kafka"))
+    testImplementation(project(":jfxmap-sqs"))
+    testImplementation(project(":jfxmap-azure-servicebus"))
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
@@ -24,6 +26,10 @@ dependencies {
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.rabbitmq)
     testImplementation(libs.testcontainers.kafka)
+    testImplementation(libs.testcontainers.localstack)
+    testImplementation(libs.testcontainers.azure)
+    testImplementation(libs.testcontainers.mssqlserver)
+    testRuntimeOnly(libs.mssql.jdbc)
 }
 
 tasks.withType<JavaCompile>().configureEach {

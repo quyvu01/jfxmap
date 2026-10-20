@@ -1,0 +1,119 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Queues": [
+          {
+            "Name": "fxmap-request--userof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "fxmap-reply--userof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "fxmap-request--silentof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "fxmap-reply--silentof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "tenant-fxmap-request--userof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "tenant-fxmap-reply--userof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "tenant-fxmap-request--silentof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          },
+          {
+            "Name": "tenant-fxmap-reply--silentof",
+            "Properties": {
+              "DeadLetteringOnMessageExpiration": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "LockDuration": "PT5S",
+              "MaxDeliveryCount": 10,
+              "ForwardDeadLetteredMessagesTo": "",
+              "ForwardTo": "",
+              "RequiresDuplicateDetection": false,
+              "RequiresSession": true
+            }
+          }
+        ],
+        "Topics": []
+      }
+    ],
+    "Logging": {
+      "Type": "File"
+    }
+  }
+}

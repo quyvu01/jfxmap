@@ -1,6 +1,13 @@
 package io.github.quyvu01.jfxmap.spring;
 
+import com.azure.core.amqp.AmqpRetryOptions;
+import com.azure.messaging.servicebus.ServiceBusClientBuilder;
+import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClientBuilder;
 import com.mongodb.client.MongoCollection;
+import graphql.GraphQLContext;
+import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusRequestClient;
+import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusServer;
+import io.github.quyvu01.jfxmap.graphql.JfxMapGraphQl;
 import io.github.quyvu01.jfxmap.DistributedMapper;
 import io.github.quyvu01.jfxmap.FxMap;
 import io.github.quyvu01.jfxmap.RequestClient;
@@ -17,6 +24,8 @@ import io.github.quyvu01.jfxmap.nats.NatsServer;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqRequestClient;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqServer;
+import io.github.quyvu01.jfxmap.sqs.SqsRequestClient;
+import io.github.quyvu01.jfxmap.sqs.SqsServer;
 import io.nats.client.Connection;
 import io.nats.client.Nats;
 import io.nats.client.Options;
@@ -39,10 +48,21 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.core.type.AnnotatedTypeMetadata;
+import org.springframework.graphql.execution.BatchLoaderRegistry;
+import org.springframework.graphql.execution.RuntimeWiringConfigurer;
+import org.springframework.graphql.server.WebGraphQlInterceptor;
+import org.springframework.util.ClassUtils;
+import reactor.core.publisher.Mono;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.sqs.SqsClient;
 
 import java.io.IOException;
-
+import java.net.URI;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Wires jfxmap into a Spring Boot application (FxMap's {@code AddFxMap(...)}).
@@ -60,13 +80,17 @@ import java.util.List;
  *       {@code jfxmap.rabbitmq.host} does the same over RabbitMQ, and with jfxmap-kafka,
  *       {@code jfxmap.kafka.bootstrap-servers} over Kafka. {@code jfxmap.<transport>.server-enabled=false} keeps
  *       only the client.</li>
+ *   <li>With jfxmap-sqs, {@code jfxmap.sqs.region} (or an {@code SqsClient} bean) does the same over Amazon SQS, and
+ *       with jfxmap-azure-servicebus, {@code jfxmap.servicebus.connection-string} over Azure Service Bus.</li>
+ *   <li>With jfxmap-graphql and Spring for GraphQL, the fields of the GraphQL types named after profiled classes are
+ *       resolved through the mapper, batched per request ({@link JfxMapGraphQl}).</li>
  *   <li>With jfxmap-mongodb, an {@link EntityConfigureOf} bean whose entity is the document class of a
  *       {@code MongoCollection} bean gets a {@link MongoQueryHandler}.</li>
  * </ul>
  *
  * A {@link RequestClient} bean of the application replaces the transports' clients; the owned keys are still
  * answered in process. Configure one transport for the client side: the first one configured (gRPC, NATS, RabbitMQ,
- * Kafka) sends the requests.
+ * Kafka, SQS, Service Bus) sends the requests.
  */
 @AutoConfiguration
 @EnableConfigurationProperties(JfxMapProperties.class)
@@ -241,6 +265,145 @@ public class JfxMapAutoConfiguration {
                     .timeout(kafka.getTimeout()).replicationFactor(kafka.getReplicationFactor());
             kafka.getProperties().forEach(builder::property);
             return builder.build();
+        }
+    }
+
+    /** jfxmap-sqs: the server for the owned keys and the client for the others. */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(SqsServer.class)
+    static class SqsConfiguration {
+        @Bean(destroyMethod = "close")
+        @ConditionalOnMissingBean(SqsClient.class)
+        @ConditionalOnProperty("jfxmap.sqs.region")
+        public SqsClient jfxMapSqsClient(JfxMapProperties properties) {
+            var sqs = properties.getSqs();
+            var builder = SqsClient.builder().region(Region.of(sqs.getRegion()));
+            if (sqs.getEndpoint() != null && !sqs.getEndpoint().isBlank())
+                builder.endpointOverride(URI.create(sqs.getEndpoint()));
+            if (sqs.getAccessKeyId() != null && !sqs.getAccessKeyId().isBlank())
+                builder.credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(sqs.getAccessKeyId(), sqs.getSecretAccessKey())));
+            return builder.build();
+        }
+
+        @Bean
+        @ConditionalOnBean(SqsClient.class)
+        @ConditionalOnProperty(value = "jfxmap.sqs.server-enabled", matchIfMissing = true)
+        public JfxMapTransportServer jfxMapSqsServer(SqsClient sqsClient, JfxMapQueryHandlers handlers,
+                                                     JfxMapProperties properties) {
+            var sqs = properties.getSqs();
+            var server = SqsServer.builder(sqsClient, handlers.all()).timeout(sqs.getTimeout())
+                    .waitTime(sqs.getWaitTime()).maxConcurrentProcessing(sqs.getMaxConcurrentProcessing()).build();
+            return new JfxMapTransportServer("sqs", server::start, server::close, server::isRunning);
+        }
+
+        @Bean(destroyMethod = "close")
+        @ConditionalOnBean(SqsClient.class)
+        @ConditionalOnMissingBean(RequestClient.class)
+        public SqsRequestClient jfxMapSqsRequestClient(SqsClient sqsClient, JfxMapProperties properties) {
+            var sqs = properties.getSqs();
+            return SqsRequestClient.builder(sqsClient).timeout(sqs.getTimeout()).waitTime(sqs.getWaitTime()).build();
+        }
+    }
+
+    /** jfxmap-azure-servicebus: the server for the owned keys and the client for the others. */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(ServiceBusServer.class)
+    @ConditionalOnProperty("jfxmap.servicebus.connection-string")
+    static class ServiceBusConfiguration {
+        @Bean
+        public JfxMapServiceBusClients jfxMapServiceBusClients(JfxMapProperties properties) {
+            var servicebus = properties.getServicebus();
+            var builder = new ServiceBusClientBuilder().connectionString(servicebus.getConnectionString());
+            if (servicebus.getTryTimeout() != null)
+                builder.retryOptions(new AmqpRetryOptions().setTryTimeout(servicebus.getTryTimeout()));
+            return new JfxMapServiceBusClients(builder);
+        }
+
+        @Bean
+        @ConditionalOnProperty(value = "jfxmap.servicebus.server-enabled", matchIfMissing = true)
+        public JfxMapTransportServer jfxMapServiceBusServer(JfxMapServiceBusClients clients,
+                                                            JfxMapQueryHandlers handlers,
+                                                            JfxMapProperties properties) {
+            var servicebus = properties.getServicebus();
+            var builder = ServiceBusServer.builder(clients.builder(), handlers.all())
+                    .topicPrefix(servicebus.getTopicPrefix()).timeout(servicebus.getTimeout())
+                    .maxConcurrentSessions(servicebus.getMaxConcurrentSessions());
+            if (servicebus.isCreateQueues())
+                builder.administration(new ServiceBusAdministrationClientBuilder()
+                        .connectionString(servicebus.getConnectionString()).buildClient());
+            var server = builder.build();
+            return new JfxMapTransportServer("servicebus", server::start, server::close, server::isRunning);
+        }
+
+        @Bean(destroyMethod = "close")
+        @ConditionalOnMissingBean(RequestClient.class)
+        public ServiceBusRequestClient jfxMapServiceBusRequestClient(JfxMapServiceBusClients clients,
+                                                                     JfxMapProperties properties) {
+            var servicebus = properties.getServicebus();
+            return ServiceBusRequestClient.builder(clients.builder()).topicPrefix(servicebus.getTopicPrefix())
+                    .timeout(servicebus.getTimeout()).build();
+        }
+    }
+
+    /** jfxmap-graphql with Spring for GraphQL: the mapped fields of the schema. */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass({JfxMapGraphQl.class, RuntimeWiringConfigurer.class})
+    static class GraphQlConfiguration {
+        @Bean
+        @ConditionalOnMissingBean
+        public JfxMapGraphQl jfxMapGraphQl(DistributedMapper mapper, JfxMapProperties properties) {
+            var builder = JfxMapGraphQl.builder(mapper);
+            properties.getGraphql().getTypeNames().forEach((className, typeName) -> {
+                try {
+                    builder.typeName(ClassUtils.forName(className, JfxMapAutoConfiguration.class.getClassLoader()),
+                            typeName);
+                } catch (ClassNotFoundException | LinkageError e) {
+                    throw new IllegalStateException("jfxmap.graphql.type-names names a class that cannot be loaded: "
+                                                    + className, e);
+                }
+            });
+            return builder.build();
+        }
+
+        /**
+         * The data fetchers, and the data loader of each request: Spring for GraphQL gives a request a registry of data
+         * loaders only when some are registered.
+         */
+        @Bean
+        public RuntimeWiringConfigurer jfxMapRuntimeWiringConfigurer(JfxMapGraphQl graphQl,
+                                                                     ObjectProvider<BatchLoaderRegistry> registries) {
+            registries.ifAvailable(registry -> registry.<JfxMapGraphQl.FieldKey, Object>forName(
+                            JfxMapGraphQl.DATA_LOADER)
+                    .registerMappedBatchLoader((keys, environment) -> Mono.fromCompletionStage(
+                            graphQl.load(keys, headers(environment.getContext())))));
+            return graphQl::configure;
+        }
+
+        private static Map<String, String> headers(Object context) {
+            if (context instanceof GraphQLContext graphQlContext) {
+                Map<String, String> headers = graphQlContext.get(JfxMapGraphQl.HEADERS);
+                if (headers != null) return headers;
+            }
+            return Map.of();
+        }
+
+        @Bean
+        @ConditionalOnClass(WebGraphQlInterceptor.class)
+        public WebGraphQlInterceptor jfxMapHeadersInterceptor(JfxMapProperties properties) {
+            var forwarded = List.copyOf(properties.getGraphql().getForwardedHeaders());
+            return (request, chain) -> {
+                if (!forwarded.isEmpty()) {
+                    var headers = new LinkedHashMap<String, String>();
+                    for (var name : forwarded) {
+                        var value = request.getHeaders().getFirst(name);
+                        if (value != null) headers.put(name, value);
+                    }
+                    request.configureExecutionInput((input, builder) -> builder
+                            .graphQLContext(context -> context.put(JfxMapGraphQl.HEADERS, headers)).build());
+                }
+                return chain.next(request);
+            };
         }
     }
 

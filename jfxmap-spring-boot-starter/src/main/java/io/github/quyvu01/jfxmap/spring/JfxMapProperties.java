@@ -29,6 +29,12 @@ public class JfxMapProperties {
     private final RabbitMq rabbitmq = new RabbitMq();
     private final Kafka kafka = new Kafka();
 
+    private final Sqs sqs = new Sqs();
+
+    private final ServiceBus servicebus = new ServiceBus();
+
+    private final GraphQl graphql = new GraphQl();
+
     public boolean isThrowIfException() {
         return throwIfException;
     }
@@ -67,6 +73,18 @@ public class JfxMapProperties {
 
     public Kafka getKafka() {
         return kafka;
+    }
+
+    public Sqs getSqs() {
+        return sqs;
+    }
+
+    public ServiceBus getServicebus() {
+        return servicebus;
+    }
+
+    public GraphQl getGraphql() {
+        return graphql;
     }
 
     /** {@code jfxmap.grpc.*}: needs jfxmap-grpc on the classpath. */
@@ -296,6 +314,147 @@ public class JfxMapProperties {
 
         public void setProperties(Map<String, String> properties) {
             this.properties = properties;
+        }
+    }
+
+    /** {@code jfxmap.sqs.*}: needs jfxmap-sqs; on when {@code region} is set or an {@code SqsClient} bean exists. */
+    public static class Sqs extends Transport {
+        /** The AWS region ({@code us-east-1}). */
+        private String region;
+
+        /** Another endpoint than AWS's (FxMap's {@code ServiceUrl}), as LocalStack's {@code http://localhost:4566}. */
+        private String endpoint;
+
+        /** The access key; without it, the default credentials of the AWS SDK. */
+        private String accessKeyId;
+
+        /** The secret of the access key. */
+        private String secretAccessKey;
+
+        /** How long a poll of a queue waits for messages (at most 20 seconds). */
+        private Duration waitTime = Duration.ofSeconds(20);
+
+        public String getRegion() {
+            return region;
+        }
+
+        public void setRegion(String region) {
+            this.region = region;
+        }
+
+        public String getEndpoint() {
+            return endpoint;
+        }
+
+        public void setEndpoint(String endpoint) {
+            this.endpoint = endpoint;
+        }
+
+        public String getAccessKeyId() {
+            return accessKeyId;
+        }
+
+        public void setAccessKeyId(String accessKeyId) {
+            this.accessKeyId = accessKeyId;
+        }
+
+        public String getSecretAccessKey() {
+            return secretAccessKey;
+        }
+
+        public void setSecretAccessKey(String secretAccessKey) {
+            this.secretAccessKey = secretAccessKey;
+        }
+
+        public Duration getWaitTime() {
+            return waitTime;
+        }
+
+        public void setWaitTime(Duration waitTime) {
+            this.waitTime = waitTime;
+        }
+    }
+
+    /** {@code jfxmap.servicebus.*}: needs jfxmap-azure-servicebus; on when {@code connection-string} is set. */
+    public static class ServiceBus extends Transport {
+        /** The connection string of the namespace (FxMap's {@code Host}). */
+        private String connectionString;
+
+        /** The prefix of the queue names (FxMap's {@code TopicPrefix}). */
+        private String topicPrefix;
+
+        /** How many sessions (clients) each request queue is read for at once (FxMap's default is 8). */
+        private int maxConcurrentSessions = 8;
+
+        /** Whether the server creates the queues that do not exist (the emulator has no management API). */
+        private boolean createQueues = true;
+
+        /** How long each operation on Service Bus may take; the SDK's default (60 seconds) when not set. */
+        private Duration tryTimeout;
+
+        public String getConnectionString() {
+            return connectionString;
+        }
+
+        public void setConnectionString(String connectionString) {
+            this.connectionString = connectionString;
+        }
+
+        public String getTopicPrefix() {
+            return topicPrefix;
+        }
+
+        public void setTopicPrefix(String topicPrefix) {
+            this.topicPrefix = topicPrefix;
+        }
+
+        public int getMaxConcurrentSessions() {
+            return maxConcurrentSessions;
+        }
+
+        public void setMaxConcurrentSessions(int maxConcurrentSessions) {
+            this.maxConcurrentSessions = maxConcurrentSessions;
+        }
+
+        public boolean isCreateQueues() {
+            return createQueues;
+        }
+
+        public void setCreateQueues(boolean createQueues) {
+            this.createQueues = createQueues;
+        }
+
+        public Duration getTryTimeout() {
+            return tryTimeout;
+        }
+
+        public void setTryTimeout(Duration tryTimeout) {
+            this.tryTimeout = tryTimeout;
+        }
+    }
+
+    /** {@code jfxmap.graphql.*}: needs jfxmap-graphql and Spring for GraphQL. */
+    public static class GraphQl {
+        /** The GraphQL type of a profiled class, by class name, when it is not the simple name of the class. */
+        private Map<String, String> typeNames = new LinkedHashMap<>();
+
+        /** The HTTP headers of a GraphQL request that its mapping requests carry ({@code authorization}...). */
+        private List<String> forwardedHeaders = new ArrayList<>();
+
+        public Map<String, String> getTypeNames() {
+            return typeNames;
+        }
+
+        public void setTypeNames(Map<String, String> typeNames) {
+            this.typeNames = typeNames;
+        }
+
+        public List<String> getForwardedHeaders() {
+            return forwardedHeaders;
+        }
+
+        public void setForwardedHeaders(List<String> forwardedHeaders) {
+            this.forwardedHeaders = forwardedHeaders;
         }
     }
 }

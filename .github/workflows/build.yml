@@ -37,7 +37,7 @@ jobs:
         shell: cmd
         run: samples\run.cmd -Check
 
-  # Java and .NET FxMap 5.1.1 asking each other over NATS, RabbitMQ and Kafka (interop/)
+  # Java and .NET FxMap 5.1.1 asking each other over NATS, RabbitMQ, Kafka, SQS and Service Bus (interop/)
   dotnet-interop:
     runs-on: ubuntu-latest
     steps:
