@@ -1,5 +1,8 @@
 package io.github.quyvu01.jfxmap.spring;
 
+import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusRequestClient;
+import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusServer;
+import io.github.quyvu01.jfxmap.graphql.JfxMapGraphQl;
 import io.github.quyvu01.jfxmap.jpa.JpaQueryHandler;
 import io.github.quyvu01.jfxmap.kafka.KafkaRequestClient;
 import io.github.quyvu01.jfxmap.kafka.KafkaServer;
@@ -8,11 +11,14 @@ import io.github.quyvu01.jfxmap.nats.NatsRequestClient;
 import io.github.quyvu01.jfxmap.nats.NatsServer;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqRequestClient;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqServer;
+import io.github.quyvu01.jfxmap.sqs.SqsRequestClient;
+import io.github.quyvu01.jfxmap.sqs.SqsServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.mock.env.MockEnvironment;
+import software.amazon.awssdk.services.sqs.SqsClient;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -23,6 +29,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** The parts of the transports' auto-configuration that need no broker. */
 class JfxMapTransportsConfigurationTest {
+    private static final String SERVICE_BUS =
+            "Endpoint=sb://localhost:1;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=key";
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(JfxMapAutoConfiguration.class));
 
@@ -32,6 +40,10 @@ class JfxMapTransportsConfigurationTest {
                 .doesNotHaveBean(NatsRequestClient.class)
                 .doesNotHaveBean(RabbitMqRequestClient.class)
                 .doesNotHaveBean(KafkaRequestClient.class)
+                .doesNotHaveBean(SqsClient.class)
+                .doesNotHaveBean(SqsRequestClient.class)
+                .doesNotHaveBean(ServiceBusRequestClient.class)
+                .doesNotHaveBean(JfxMapServiceBusClients.class)
                 .doesNotHaveBean(JfxMapTransportServer.class)
                 .doesNotHaveBean(JfxMapRabbitMqConnection.class));
     }
@@ -39,13 +51,62 @@ class JfxMapTransportsConfigurationTest {
     @Test
     void aTransportThatIsNotOnTheClasspathStaysOff() {
         runner.withClassLoader(new FilteredClassLoader(NatsServer.class, RabbitMqServer.class, KafkaServer.class,
-                        MongoQueryHandler.class, JpaQueryHandler.class))
+                        MongoQueryHandler.class, JpaQueryHandler.class, SqsServer.class, ServiceBusServer.class,
+                        JfxMapGraphQl.class))
                 .withPropertyValues("jfxmap.nats.url=nats://localhost:1", "jfxmap.rabbitmq.host=localhost",
-                        "jfxmap.kafka.bootstrap-servers=localhost:1")
+                        "jfxmap.kafka.bootstrap-servers=localhost:1", "jfxmap.sqs.region=us-east-1",
+                        "jfxmap.servicebus.connection-string=" + SERVICE_BUS)
                 .run(context -> assertThat(context).hasNotFailed()
                         .doesNotHaveBean(JfxMapTransportServer.class)
+                        .doesNotHaveBean(SqsClient.class)
+                        .doesNotHaveBean(JfxMapServiceBusClients.class)
+                        .doesNotHaveBean(JfxMapGraphQl.class)
                         .doesNotHaveBean(JfxMapRabbitMqConnection.class)
                         .doesNotHaveBean(EntityQueryHandlerFactory.class));
+    }
+
+    @Test
+    void sqsGivesAClientWithoutConnectingFirst() {
+        runner.withPropertyValues("jfxmap.sqs.region=eu-west-1", "jfxmap.sqs.endpoint=http://localhost:1",
+                        "jfxmap.sqs.access-key-id=key", "jfxmap.sqs.secret-access-key=secret",
+                        "jfxmap.sqs.wait-time=2s", "jfxmap.sqs.server-enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(SqsClient.class);
+                    assertThat(context.getBean(SqsRequestClient.class).responseQueue()).isNull();
+                    assertThat(context).doesNotHaveBean(JfxMapTransportServer.class);
+                    var sqs = context.getBean(JfxMapProperties.class).getSqs();
+                    assertThat(sqs.getWaitTime()).isEqualTo(Duration.ofSeconds(2));
+                    assertThat(sqs.getAccessKeyId()).isEqualTo("key");
+                    assertThat(sqs.getSecretAccessKey()).isEqualTo("secret");
+                });
+    }
+
+    @Test
+    void sqsUsesTheSqsClientOfTheApplication() {
+        runner.withBean(SqsClient.class, () -> SqsClient.builder()
+                        .region(software.amazon.awssdk.regions.Region.US_EAST_1).build())
+                .withPropertyValues("jfxmap.sqs.server-enabled=false")
+                .run(context -> assertThat(context).hasNotFailed().hasSingleBean(SqsClient.class)
+                        .hasSingleBean(SqsRequestClient.class));
+    }
+
+    @Test
+    void serviceBusGivesAClientWithoutConnectingFirst() {
+        runner.withPropertyValues("jfxmap.servicebus.connection-string=" + SERVICE_BUS,
+                        "jfxmap.servicebus.topic-prefix=tenant", "jfxmap.servicebus.try-timeout=3s",
+                        "jfxmap.servicebus.max-concurrent-sessions=2", "jfxmap.servicebus.create-queues=false",
+                        "jfxmap.servicebus.server-enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(JfxMapServiceBusClients.class);
+                    assertThat(context.getBean(ServiceBusRequestClient.class).sessionId()).isNotBlank();
+                    assertThat(context).doesNotHaveBean(JfxMapTransportServer.class);
+                    var servicebus = context.getBean(JfxMapProperties.class).getServicebus();
+                    assertThat(servicebus.getTopicPrefix()).isEqualTo("tenant");
+                    assertThat(servicebus.getTryTimeout()).isEqualTo(Duration.ofSeconds(3));
+                    assertThat(servicebus.getMaxConcurrentSessions()).isEqualTo(2);
+                    assertThat(servicebus.isCreateQueues()).isFalse();
+                });
+        assertThatThrownBy(() -> new JfxMapServiceBusClients(null)).isInstanceOf(NullPointerException.class);
     }
 
     @Test
@@ -113,6 +174,15 @@ class JfxMapTransportsConfigurationTest {
         assertThat(properties.getRabbitmq().getChannelPoolSize()).isEqualTo(5);
         assertThat(properties.getKafka().getPartitions()).isEqualTo(1);
         assertThat(properties.getKafka().getReplicationFactor()).isEqualTo((short) 1);
+        assertThat(properties.getSqs().getWaitTime()).isEqualTo(Duration.ofSeconds(20));
+        assertThat(properties.getSqs().getTimeout()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(properties.getSqs().getRegion()).isNull();
+        assertThat(properties.getServicebus().getMaxConcurrentSessions()).isEqualTo(8);
+        assertThat(properties.getServicebus().isCreateQueues()).isTrue();
+        assertThat(properties.getServicebus().getTryTimeout()).isNull();
+        assertThat(properties.getServicebus().getTopicPrefix()).isNull();
+        assertThat(properties.getGraphql().getTypeNames()).isEmpty();
+        assertThat(properties.getGraphql().getForwardedHeaders()).isEmpty();
     }
 
     @Test
