@@ -9,6 +9,7 @@ import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClient;
 import com.azure.messaging.servicebus.administration.models.CreateQueueOptions;
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
+import io.github.quyvu01.jfxmap.RequestServer;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.wire.WireResponder;
@@ -20,6 +21,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -30,6 +33,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * answered with a {@code Result} on the queue of its {@code ReplyTo}, with its correlation id and session id, then
  * completed.
  *
+ * <p>The server fails, and stops, when a request queue does not exist (it was deleted); a
+ * {@link io.github.quyvu01.jfxmap.supervision.ServerSupervisor} starts it again, which creates the queues again with an
+ * administration client. Other errors are logged: the processors recover from them by themselves.
+ *
  * <p>Without an administration client the queues must exist, as on the Service Bus emulator, which declares them in
  * its configuration.
  *
@@ -37,7 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * ServiceBusServer server = ServiceBusServer.builder(clients, handlers).administration(admin).build().start();
  * }</pre>
  */
-public final class ServiceBusServer implements AutoCloseable {
+public final class ServiceBusServer implements RequestServer {
     /** FxMap's default {@code MaxConcurrentSessions}. */
     public static final int DEFAULT_MAX_CONCURRENT_SESSIONS = 8;
 
@@ -51,6 +58,7 @@ public final class ServiceBusServer implements AutoCloseable {
     private final Map<String, ServiceBusSenderClient> senders = new ConcurrentHashMap<>();
     // Guarded by this
     private final List<ServiceBusProcessorClient> processors = new ArrayList<>();
+    private CompletableFuture<Void> run = CompletableFuture.completedFuture(null);
 
     private ServiceBusServer(Builder builder) {
         this.clients = builder.clients;
@@ -81,8 +89,11 @@ public final class ServiceBusServer implements AutoCloseable {
      * Creates the missing queues (with an administration client) and starts reading the request queues; does nothing
      * when the server already runs or has no key.
      */
+    @Override
     public synchronized ServiceBusServer start() {
         if (!processors.isEmpty() || responder.keys().isEmpty()) return this;
+        var current = new CompletableFuture<Void>();
+        run = current;
         try {
             for (var key : responder.keys()) {
                 var requestQueue = ServiceBusNames.requestQueue(prefix, key);
@@ -94,7 +105,7 @@ public final class ServiceBusServer implements AutoCloseable {
                         .maxConcurrentCalls(1)
                         .disableAutoComplete()
                         .processMessage(context -> answer(key, context))
-                        .processError(this::failed)
+                        .processError(error -> failed(current, error))
                         .buildProcessorClient();
                 processors.add(processor);
                 processor.start();
@@ -104,6 +115,12 @@ public final class ServiceBusServer implements AutoCloseable {
             throw e;
         }
         return this;
+    }
+
+    /** The current run: it ends when the server is closed, or fails when a request queue does not exist. */
+    @Override
+    public synchronized CompletionStage<Void> whenStopped() {
+        return run;
     }
 
     private void createIfMissing(String queue) {
@@ -117,6 +134,7 @@ public final class ServiceBusServer implements AutoCloseable {
         }
     }
 
+    @Override
     public synchronized boolean isRunning() {
         return !processors.isEmpty();
     }
@@ -149,14 +167,28 @@ public final class ServiceBusServer implements AutoCloseable {
         return senders.computeIfAbsent(queue, q -> clients.sender().queueName(q).buildClient());
     }
 
-    private void failed(ServiceBusErrorContext context) {
+    private void failed(CompletableFuture<Void> current, ServiceBusErrorContext context) {
         LOGGER.log(System.Logger.Level.ERROR, "Azure Service Bus error on " + context.getEntityPath() + " ("
                                               + context.getErrorSource() + ")", context.getException());
+        if (!ServiceBusMessages.isMissingEntity(context.getException())) return;
+        // Off the thread of the processor, which close() waits for
+        Thread.ofVirtual().name("jfxmap-servicebus-failure").start(() -> {
+            synchronized (this) {
+                if (run != current || current.isDone()) return;
+                closeClients();
+            }
+            current.completeExceptionally(context.getException());
+        });
     }
 
     /** Stops reading the request queues and closes the senders; the queues stay. */
     @Override
     public synchronized void close() {
+        closeClients();
+        run.complete(null);
+    }
+
+    private void closeClients() {
         for (var processor : processors) {
             try {
                 processor.close();

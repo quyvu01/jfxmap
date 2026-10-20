@@ -83,7 +83,8 @@ public final class ServiceBusRequestClient implements RequestClient, AutoCloseab
                     .setReplyTo(replyQueue)
                     .setSessionId(sessionId);
             context.headers().forEach((name, value) -> {
-                if (value != null) message.getApplicationProperties().putIfAbsent(name, value);
+                if (value != null)
+                    message.getApplicationProperties().putIfAbsent(name, ServiceBusMessages.property(name, value));
             });
             sender(ServiceBusNames.requestQueue(prefix, key)).sendMessage(message).toFuture()
                     .whenComplete((ignored, failure) -> {
@@ -171,6 +172,11 @@ public final class ServiceBusRequestClient implements RequestClient, AutoCloseab
                 LOGGER.log(System.Logger.Level.WARNING, "A Service Bus session receiver did not close.", e);
             }
         }
+    }
+
+    @Override
+    public String transport() {
+        return "azureservicebus";
     }
 
     public static final class Builder {

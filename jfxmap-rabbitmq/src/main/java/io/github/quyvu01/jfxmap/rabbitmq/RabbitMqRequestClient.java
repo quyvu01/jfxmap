@@ -172,6 +172,11 @@ public final class RabbitMqRequestClient implements RequestClient, AutoCloseable
         replyChannel = null;
     }
 
+    @Override
+    public String transport() {
+        return "rabbitmq";
+    }
+
     public static final class Builder {
         private final Connection connection;
         private Duration timeout = WireResponder.DEFAULT_TIMEOUT;

@@ -209,6 +209,11 @@ public final class GrpcRequestClient implements RequestClient, AutoCloseable {
         return Grpc.newChannelBuilder(target, credentials).build();
     }
 
+    @Override
+    public String transport() {
+        return "grpc";
+    }
+
     public static final class Builder {
         private final Set<String> hosts = new LinkedHashSet<>();
         private Duration timeout = DEFAULT_TIMEOUT;

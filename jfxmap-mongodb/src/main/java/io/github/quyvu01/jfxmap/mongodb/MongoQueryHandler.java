@@ -113,6 +113,11 @@ public final class MongoQueryHandler<T> implements QueryHandler {
     }
 
     @Override
+    public String dbSystem() {
+        return "mongodb";
+    }
+
+    @Override
     public CompletionStage<ItemsResponse> handle(MapRequest request, MapContext context) {
         Objects.requireNonNull(request, "request");
         return CompletableFuture.supplyAsync(() -> answer(request), executor);

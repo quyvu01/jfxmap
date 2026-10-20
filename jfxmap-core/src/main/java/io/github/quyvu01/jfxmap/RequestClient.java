@@ -12,4 +12,12 @@ import java.util.concurrent.CompletionStage;
 @FunctionalInterface
 public interface RequestClient {
     CompletionStage<ItemsResponse> request(DistributedKeyRef key, MapRequest request, MapContext context);
+
+    /**
+     * The name of the transport, as FxMap names it in its telemetry ({@code nats}, {@code rabbitmq}, {@code kafka},
+     * {@code grpc}, {@code sqs}, {@code azureservicebus}); {@code custom} for a client that does not say.
+     */
+    default String transport() {
+        return "custom";
+    }
 }

@@ -74,6 +74,11 @@ public final class NatsRequestClient implements RequestClient {
         });
     }
 
+    @Override
+    public String transport() {
+        return "nats";
+    }
+
     private RuntimeException translate(DistributedKeyRef key, CompletableFuture<Message> sent, Throwable failure) {
         var cause = failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure;
         var request = sent instanceof NatsRequestCompletableFuture natsRequest ? natsRequest : null;

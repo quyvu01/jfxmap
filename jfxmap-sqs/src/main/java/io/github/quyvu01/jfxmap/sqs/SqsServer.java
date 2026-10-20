@@ -1,6 +1,7 @@
 package io.github.quyvu01.jfxmap.sqs;
 
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
+import io.github.quyvu01.jfxmap.RequestServer;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.wire.DotNetKeyNames;
@@ -19,6 +20,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -28,11 +31,14 @@ import java.util.concurrent.Semaphore;
  * {@code ReplyTo} attribute, with their {@code CorrelationId}; at most {@code maxConcurrentProcessing} requests are
  * answered at once. The instances of a service share the queues, so each request reaches one of them.
  *
+ * <p>The server fails, and stops, when one of its queues is deleted; a
+ * {@link io.github.quyvu01.jfxmap.supervision.ServerSupervisor} starts it again, which creates the queue again.
+ *
  * <pre>{@code
  * SqsServer server = SqsServer.builder(SqsClient.create(), handlers).build().start();
  * }</pre>
  */
-public final class SqsServer implements AutoCloseable {
+public final class SqsServer implements RequestServer {
     /** FxMap's {@code MaxConcurrentProcessing}. */
     public static final int DEFAULT_MAX_CONCURRENT_PROCESSING = 128;
 
@@ -42,8 +48,8 @@ public final class SqsServer implements AutoCloseable {
     private final WireResponder responder;
     private final Duration waitTime;
     private final Semaphore slots;
-    // Guarded by this; a new object each time the server starts, so the polls of an earlier start stop
-    private Object generation;
+    // Guarded by this; a new run each time the server starts, so the polls of an earlier start stop
+    private CompletableFuture<Void> generation;
     private final Map<DistributedKeyRef, String> queueUrls = new LinkedHashMap<>();
 
     private SqsServer(Builder builder) {
@@ -74,11 +80,12 @@ public final class SqsServer implements AutoCloseable {
      *
      * @throws software.amazon.awssdk.core.exception.SdkException when SQS refuses to find or create a queue
      */
+    @Override
     public synchronized SqsServer start() {
         if (generation != null || responder.keys().isEmpty()) return this;
         queueUrls.clear();
         for (var key : responder.keys()) queueUrls.put(key, queueUrl(SqsNames.queue(key)));
-        var current = new Object();
+        var current = new CompletableFuture<Void>();
         generation = current;
         queueUrls.forEach((key, url) -> Thread.ofVirtual().name("jfxmap-sqs-" + SqsNames.queue(key))
                 .start(() -> poll(current, key, url)));
@@ -95,15 +102,31 @@ public final class SqsServer implements AutoCloseable {
         }
     }
 
+    @Override
     public synchronized boolean isRunning() {
         return generation != null;
+    }
+
+    /** The current run: it ends when the server is closed, or fails when one of its queues was deleted. */
+    @Override
+    public synchronized CompletionStage<Void> whenStopped() {
+        return generation != null ? generation : CompletableFuture.completedFuture(null);
     }
 
     private synchronized boolean isCurrent(Object current) {
         return generation == current;
     }
 
-    private void poll(Object current, DistributedKeyRef key, String url) {
+    private void failed(CompletableFuture<Void> current, RuntimeException failure) {
+        synchronized (this) {
+            if (generation != current) return;
+            generation = null;
+        }
+        LOGGER.log(System.Logger.Level.ERROR, "The FxMap SQS server stopped.", failure);
+        current.completeExceptionally(failure);
+    }
+
+    private void poll(CompletableFuture<Void> current, DistributedKeyRef key, String url) {
         while (isCurrent(current)) {
             try {
                 var messages = SqsLoops.receive(sqs, url, waitTime);
@@ -120,6 +143,10 @@ public final class SqsServer implements AutoCloseable {
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                return;
+            } catch (QueueDoesNotExistException e) {
+                // Polling again cannot help: a restart creates the queue again
+                failed(current, e);
                 return;
             } catch (RuntimeException e) {
                 if (!isCurrent(current)) return;
@@ -171,7 +198,10 @@ public final class SqsServer implements AutoCloseable {
     /** Stops polling; the queues stay. A poll in progress ends within the wait time. */
     @Override
     public synchronized void close() {
+        if (generation == null) return;
+        var ended = generation;
         generation = null;
+        ended.complete(null);
     }
 
     public static final class Builder {

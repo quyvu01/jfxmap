@@ -32,6 +32,15 @@ final class ServiceBusMessages {
         return headers;
     }
 
+    /**
+     * A header as an application property: a string, except the W3C trace context ({@code traceparent},
+     * {@code tracestate}), which FxMap sends and reads as UTF-8 bytes.
+     */
+    static Object property(String name, String value) {
+        return "traceparent".equals(name) || "tracestate".equals(name) ? value.getBytes(StandardCharsets.UTF_8)
+                : value;
+    }
+
     /** Whether a failure says that a queue does not exist. */
     static boolean isMissingEntity(Throwable failure) {
         for (var current = failure; current != null; current = current.getCause())

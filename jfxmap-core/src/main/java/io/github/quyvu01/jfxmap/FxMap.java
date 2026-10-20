@@ -3,8 +3,13 @@ package io.github.quyvu01.jfxmap;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.fluent.ProfileOf;
 import io.github.quyvu01.jfxmap.internal.ProfilePlan;
+import io.github.quyvu01.jfxmap.pipeline.Pipelines;
+import io.github.quyvu01.jfxmap.pipeline.RetryPolicy;
+import io.github.quyvu01.jfxmap.pipeline.SendBehavior;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
@@ -16,6 +21,7 @@ import java.util.function.Function;
  * DistributedMapper mapper = FxMap.builder()
  *         .addProfiles(new UserSummaryProfile())
  *         .requestClient(natsClient)
+ *         .retryPolicy(RetryPolicy.retries(3).delay(Duration.ofMillis(200)))
  *         .throwIfException()
  *         .build();
  *
@@ -38,6 +44,8 @@ public final class FxMap {
         private boolean throwIfException;
         private int maxNestingDepth = DEFAULT_MAX_NESTING_DEPTH;
         private Function<Class<?>, Object> services;
+        private final List<SendBehavior> sendBehaviors = new ArrayList<>();
+        private RetryPolicy retryPolicy;
 
         private Builder() {
         }
@@ -83,9 +91,29 @@ public final class FxMap {
             return this;
         }
 
+        /**
+         * Behaviors around each request sent (FxMap's {@code AddSendPipelines}), run in their order, inside the
+         * retries: each attempt goes through them.
+         */
+        public Builder addSendBehaviors(SendBehavior... behaviors) {
+            for (var behavior : behaviors) sendBehaviors.add(Objects.requireNonNull(behavior, "behavior"));
+            return this;
+        }
+
+        /** Sends the failed requests again (FxMap's {@code SetRetryPolicy}); none by default. */
+        public Builder retryPolicy(RetryPolicy retryPolicy) {
+            this.retryPolicy = Objects.requireNonNull(retryPolicy, "retryPolicy");
+            return this;
+        }
+
         public DistributedMapper build() {
             if (requestClient == null && !plans.isEmpty()) throw new DistributedMapException.NoRequestClient();
-            return new DefaultDistributedMapper(Map.copyOf(plans), requestClient, throwIfException, maxNestingDepth,
+            // As in FxMap, the retries are outside the other behaviors
+            var behaviors = new ArrayList<SendBehavior>();
+            if (retryPolicy != null && retryPolicy.retries() > 0) behaviors.add(retryPolicy.asBehavior());
+            behaviors.addAll(sendBehaviors);
+            var client = requestClient == null ? null : Pipelines.send(requestClient, behaviors);
+            return new DefaultDistributedMapper(Map.copyOf(plans), client, throwIfException, maxNestingDepth,
                     services);
         }
     }

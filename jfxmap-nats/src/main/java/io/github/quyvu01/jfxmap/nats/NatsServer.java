@@ -1,6 +1,7 @@
 package io.github.quyvu01.jfxmap.nats;
 
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
+import io.github.quyvu01.jfxmap.RequestServer;
 import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.wire.WireResponder;
@@ -14,6 +15,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -28,7 +31,7 @@ import java.util.concurrent.Semaphore;
  * server.start();
  * }</pre>
  */
-public final class NatsServer implements AutoCloseable {
+public final class NatsServer implements RequestServer {
     /** FxMap's {@code MaxConcurrentProcessing}. */
     public static final int DEFAULT_MAX_CONCURRENT_PROCESSING = 128;
 
@@ -39,6 +42,7 @@ public final class NatsServer implements AutoCloseable {
     private final String topicPrefix;
     private final Semaphore slots;
     private Dispatcher dispatcher;
+    private CompletableFuture<Void> run = CompletableFuture.completedFuture(null);
 
     private NatsServer(Builder builder) {
         this.connection = builder.connection;
@@ -66,17 +70,30 @@ public final class NatsServer implements AutoCloseable {
         return subjects;
     }
 
-    /** Subscribes to the subjects; does nothing when the server already runs. */
+    /**
+     * Subscribes to the subjects; does nothing when the server already runs.
+     *
+     * @throws IllegalStateException when the connection is closed
+     */
+    @Override
     public synchronized NatsServer start() {
         if (dispatcher != null) return this;
         var started = connection.createDispatcher();
         subjects().forEach((key, subject) -> started.subscribe(subject, message -> receive(key, message)));
         dispatcher = started;
+        run = new CompletableFuture<>();
         return this;
     }
 
+    @Override
     public synchronized boolean isRunning() {
         return dispatcher != null;
+    }
+
+    /** The current run; it ends when the server is closed (jnats reconnects by itself). */
+    @Override
+    public synchronized CompletionStage<Void> whenStopped() {
+        return run;
     }
 
     private void receive(DistributedKeyRef key, Message message) {
@@ -123,8 +140,14 @@ public final class NatsServer implements AutoCloseable {
     @Override
     public synchronized void close() {
         if (dispatcher == null) return;
-        connection.closeDispatcher(dispatcher);
-        dispatcher = null;
+        try {
+            connection.closeDispatcher(dispatcher);
+        } catch (RuntimeException e) {
+            LOGGER.log(System.Logger.Level.WARNING, "The NATS dispatcher did not close.", e);
+        } finally {
+            dispatcher = null;
+            run.complete(null);
+        }
     }
 
     public static final class Builder {

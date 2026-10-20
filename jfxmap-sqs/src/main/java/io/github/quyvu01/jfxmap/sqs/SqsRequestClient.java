@@ -177,6 +177,11 @@ public final class SqsRequestClient implements RequestClient, AutoCloseable {
         }
     }
 
+    @Override
+    public String transport() {
+        return "sqs";
+    }
+
     public static final class Builder {
         private final SqsClient sqs;
         private Duration timeout = WireResponder.DEFAULT_TIMEOUT;

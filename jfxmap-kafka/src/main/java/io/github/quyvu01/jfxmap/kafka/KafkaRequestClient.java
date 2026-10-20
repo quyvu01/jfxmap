@@ -167,6 +167,11 @@ public final class KafkaRequestClient implements RequestClient, AutoCloseable {
         pending.failAll(new IllegalStateException("The Kafka request client is closed."));
     }
 
+    @Override
+    public String transport() {
+        return "kafka";
+    }
+
     public static final class Builder {
         private final Map<String, Object> config = new HashMap<>();
         private final String applicationName;

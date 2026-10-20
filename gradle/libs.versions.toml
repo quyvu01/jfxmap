@@ -20,6 +20,7 @@ azure-servicebus = "7.18.1"
 graphql-java = "25.0"
 spring-graphql = "2.0.5"
 mssql-jdbc = "13.4.0.jre11"
+opentelemetry = "1.62.0"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -64,6 +65,10 @@ spring-graphql = { module = "org.springframework.graphql:spring-graphql", versio
 spring-boot-graphql = { module = "org.springframework.boot:spring-boot-graphql" }
 spring-web = { module = "org.springframework:spring-web" }
 reactor-core = { module = "io.projectreactor:reactor-core" }
+opentelemetry-bom = { module = "io.opentelemetry:opentelemetry-bom", version.ref = "opentelemetry" }
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk" }
+opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing" }
 
 [plugins]
 protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }

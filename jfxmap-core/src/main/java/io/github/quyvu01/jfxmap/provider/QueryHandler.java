@@ -18,4 +18,12 @@ public interface QueryHandler {
     Class<?> entityType();
 
     CompletionStage<ItemsResponse> handle(MapRequest request, MapContext context);
+
+    /**
+     * The database the entities are read from, as FxMap names it in its telemetry ({@code jpa}, {@code mongodb}), or
+     * {@code null} when the handler does not read a database.
+     */
+    default String dbSystem() {
+        return null;
+    }
 }

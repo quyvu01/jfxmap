@@ -44,4 +44,9 @@ public final class LocalRequestClient implements RequestClient {
             return CompletableFuture.failedFuture(new DistributedMapException.NoHandlerForDistributedKey(key));
         return handler.handle(request, context);
     }
+
+    @Override
+    public String transport() {
+        return "local";
+    }
 }
