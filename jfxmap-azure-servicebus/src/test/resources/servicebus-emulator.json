@@ -9,7 +9,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
@@ -22,7 +22,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
@@ -35,7 +35,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
@@ -48,7 +48,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
@@ -61,7 +61,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
@@ -74,7 +74,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
@@ -87,7 +87,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
@@ -100,7 +100,7 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": false,
               "DefaultMessageTimeToLive": "PT1H",
-              "LockDuration": "PT1M",
+              "LockDuration": "PT5S",
               "MaxDeliveryCount": 10,
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",

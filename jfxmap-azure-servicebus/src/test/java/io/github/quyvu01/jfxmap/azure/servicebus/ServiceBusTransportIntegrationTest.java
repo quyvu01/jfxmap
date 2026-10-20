@@ -20,6 +20,7 @@ import io.github.quyvu01.jfxmap.response.ValueResponse;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.azure.ServiceBusEmulatorContainer;
 import org.testcontainers.containers.Network;
@@ -106,12 +107,18 @@ class ServiceBusTransportIntegrationTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final DistributedKeyRef USER_OF = DistributedKeyRef.of("UserOf");
 
-    private static ServiceBusClientBuilder clients;
+    private ServiceBusClientBuilder clients;
     private final List<AutoCloseable> closeables = new ArrayList<>();
 
     @BeforeAll
     static void startEmulator() {
         EMULATOR.start();
+    }
+
+    @BeforeEach
+    void newClients() {
+        // The clients of one builder share a connection, closed with the last of them: each test opens its own, so
+        // that it does not race the closing of the previous test's.
         // The emulator answers a wait for the next session only when it times out: a short one picks up new sessions
         clients = new ServiceBusClientBuilder().connectionString(EMULATOR.getConnectionString())
                 .retryOptions(new AmqpRetryOptions().setTryTimeout(Duration.ofSeconds(3)));
@@ -130,7 +137,9 @@ class ServiceBusTransportIntegrationTest {
     }
 
     private ServiceBusServer serve(ServiceBusServer.Builder builder) {
-        var server = builder.build().start();
+        // The emulator keeps a closed processor's waits for the next session, and one of them can take and lock the
+        // session of a later test: one wait per server leaves fewer of them behind
+        var server = builder.maxConcurrentSessions(1).build().start();
         closeables.add(server);
         return server;
     }
@@ -153,7 +162,7 @@ class ServiceBusTransportIntegrationTest {
     }
 
     /** The next message of a session queue, completed: any session, or the given one. */
-    private static ServiceBusReceivedMessage receiveOne(String queue, String sessionId) {
+    private ServiceBusReceivedMessage receiveOne(String queue, String sessionId) {
         try (var sessions = clients.sessionReceiver().queueName(queue).buildClient();
              var receiver = sessionId == null ? sessions.acceptNextSession() : sessions.acceptSession(sessionId)) {
             for (int i = 0; i < 10; i++) {
