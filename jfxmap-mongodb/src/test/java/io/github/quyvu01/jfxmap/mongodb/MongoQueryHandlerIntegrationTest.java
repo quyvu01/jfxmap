@@ -42,8 +42,9 @@ class MongoQueryHandlerIntegrationTest {
     // A MongoDB container that is up and answers a ping, with a client on it
     record Mongo(MongoDBContainer container, MongoClient client) {
         static Mongo start() {
-            // mongod logs this once it accepts connections, which a bound port alone does not promise
-            var container = new MongoDBContainer("mongo:8.0")
+            // mongod logs this once it accepts connections, which a bound port alone does not promise. MongoDB 8.x
+            // refuses to start on Linux 6.19 and newer (SERVER-121912), which GitHub's runners now run: 7.0 here
+            var container = new MongoDBContainer("mongo:7.0")
                     .waitingFor(Wait.forLogMessage("(?i).*waiting for connections.*", 1));
             container.start();
             // getConnectionString, not getReplicaSetUrl: that one asks Docker whether the container still runs
