@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: profiles, entity configurations and the DistributedMapper engine"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

@@ -20,6 +20,8 @@ azure-servicebus = "7.18.1"
 graphql-java = "25.0"
 spring-graphql = "2.0.5"
 mssql-jdbc = "13.4.0.jre11"
+jmh = "1.37"
+jmhPlugin = "0.7.3"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -68,3 +70,4 @@ reactor-core = { module = "io.projectreactor:reactor-core" }
 [plugins]
 protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+jmh = { id = "me.champeau.jmh", version.ref = "jmhPlugin" }

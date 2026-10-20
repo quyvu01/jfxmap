@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: a JPA query handler that translates the expressions into SQL"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
