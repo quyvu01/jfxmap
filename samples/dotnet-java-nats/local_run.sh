@@ -70,11 +70,22 @@ jar="$(ls "$sample/sales-service/build/libs/"*.jar | grep -v -- '-plain\.jar$' |
 [[ -n "$jar" ]] || { echo "No jar was built for sales-service." >&2; exit 1; }
 
 mkdir -p "$logs"
+# Where the output of a service goes: its log file and, unless --check, the terminal too, each line prefixed with
+# the service's name, so that the HTTP calls and the SQL of both services show as they happen
+log_to() {
+  : >"$logs/$1.log"
+  if [[ "$mode" == "run" ]]; then
+    # Line by line as they come (awk can wait for a whole block of input before it prints)
+    tee -a "$logs/$1.log" | while IFS= read -r line; do printf '[%s] %s\n' "$1" "$line"; done
+  else
+    cat >>"$logs/$1.log"
+  fi
+}
 # catalog-service reads appsettings.json from its working directory; the environment overrides its settings
 (cd "$build/catalog-service" && \
   ConnectionStrings__Catalog="Host=$PG_HOST;Port=$PG_PORT;Database=$CATALOG_DB;Username=$PG_USER;Password=$PG_PASSWORD" \
   FxMap__Nats__Url="$NATS_URL" \
-  exec dotnet CatalogService.dll) >"$logs/catalog-service.log" 2>&1 &
+  exec dotnet CatalogService.dll) > >(log_to catalog-service) 2>&1 &
 pids+=("$!")
 echo "Started catalog-service (pid $!), log: $logs/catalog-service.log"
 "$java" -jar "$jar" \
@@ -83,7 +94,7 @@ echo "Started catalog-service (pid $!), log: $logs/catalog-service.log"
   "--spring.datasource.password=$PG_PASSWORD" \
   "--spring.flyway.schemas=$SALES_SCHEMA" \
   "--spring.jpa.properties.hibernate.default_schema=$SALES_SCHEMA" \
-  "--jfxmap.nats.url=$NATS_URL" >"$logs/sales-service.log" 2>&1 &
+  "--jfxmap.nats.url=$NATS_URL" > >(log_to sales-service) 2>&1 &
 pids+=("$!")
 echo "Started sales-service (pid $!), log: $logs/sales-service.log"
 
@@ -130,7 +141,6 @@ fi
 echo "Both services are running, on PostgreSQL $PG_HOST:$PG_PORT ($CATALOG_DB, $SALES_DB.$SALES_SCHEMA) and $NATS_URL."
 echo "Swagger: http://localhost:5080/swagger and http://localhost:8090/swagger-ui.html"
 echo "GraphQL: http://localhost:5080/graphql and http://localhost:8090/graphiql"
-echo "The SQL of each service is in its log:"
-echo "  tail -f $logs/catalog-service.log $logs/sales-service.log"
+echo "Their logs (HTTP calls, SQL) show below, and are kept in $logs."
 echo "Press Ctrl+C to stop them (your PostgreSQL and NATS keep running)."
 wait

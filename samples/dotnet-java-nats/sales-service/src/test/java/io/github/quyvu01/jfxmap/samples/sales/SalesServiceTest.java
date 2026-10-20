@@ -219,4 +219,14 @@ class SalesServiceTest {
         assertThat(output.getOut()).contains("org.hibernate.SQL").contains("from")
                 .contains("sales_order").contains("binding parameter (1:BIGINT) <- [3]");
     }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void logsEachHttpCall(CapturedOutput output) throws Exception {
+        get("/orders/3?x=1");
+        get("/orders/99");
+
+        assertThat(output.getOut()).containsPattern("HTTP GET /orders/3\\?x=1 responded 200 in \\d+ ms")
+                .containsPattern("HTTP GET /orders/99 responded 404 in \\d+ ms");
+    }
 }
