@@ -52,11 +52,22 @@ jar="$(ls "$sample/sales-service/build/libs/"*.jar | grep -v -- '-plain\.jar$' |
 [[ -n "$jar" ]] || { echo "No jar was built for sales-service." >&2; exit 1; }
 
 mkdir -p "$logs"
+# Where the output of a service goes: its log file and, unless --check, the terminal too, each line prefixed with
+# the service's name, so that the HTTP calls and the SQL of both services show as they happen
+log_to() {
+  : >"$logs/$1.log"
+  if [[ "$mode" == "run" ]]; then
+    # Line by line as they come (awk can wait for a whole block of input before it prints)
+    tee -a "$logs/$1.log" | while IFS= read -r line; do printf '[%s] %s\n' "$1" "$line"; done
+  else
+    cat >>"$logs/$1.log"
+  fi
+}
 # catalog-service reads appsettings.json from its working directory
-(cd "$build/catalog-service" && exec dotnet CatalogService.dll) >"$logs/catalog-service.log" 2>&1 &
+(cd "$build/catalog-service" && exec dotnet CatalogService.dll) > >(log_to catalog-service) 2>&1 &
 pids+=("$!")
 echo "Started catalog-service (pid $!), log: $logs/catalog-service.log"
-"$java" -jar "$jar" >"$logs/sales-service.log" 2>&1 &
+"$java" -jar "$jar" > >(log_to sales-service) 2>&1 &
 pids+=("$!")
 echo "Started sales-service (pid $!), log: $logs/sales-service.log"
 
@@ -108,6 +119,6 @@ echo "  curl http://localhost:5080/products"
 echo "  curl http://localhost:8090/customers"
 echo "Swagger: http://localhost:5080/swagger and http://localhost:8090/swagger-ui.html"
 echo "GraphQL: http://localhost:5080/graphql and http://localhost:8090/graphiql"
-echo "The SQL of each service is in its log."
+echo "Their logs (HTTP calls, SQL) show below, and are kept in $logs."
 echo "Press Ctrl+C to stop."
 wait

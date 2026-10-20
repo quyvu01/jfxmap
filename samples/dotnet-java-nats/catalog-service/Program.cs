@@ -46,6 +46,8 @@ using (var scope = app.Services.CreateScope())
     await scope.ServiceProvider.GetRequiredService<CatalogDb>().Database.MigrateAsync();
 }
 
+// One line per HTTP call: "HTTP GET /reviews responded 200 in 35.1 ms"
+app.UseSerilogRequestLogging();
 app.UseSwagger();
 app.UseSwaggerUI();
 app.MapGraphQL();

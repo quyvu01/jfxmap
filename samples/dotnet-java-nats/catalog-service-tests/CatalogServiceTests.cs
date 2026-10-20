@@ -167,4 +167,28 @@ public sealed class CatalogServiceTests(CatalogFixture fixture) : IClassFixture<
         Assert.True(loggers.CreateLogger("Microsoft.EntityFrameworkCore.Database.Command").IsEnabled(LogLevel.Information));
         Assert.False(loggers.CreateLogger("Microsoft.EntityFrameworkCore.Query").IsEnabled(LogLevel.Information));
     }
+
+    [Fact]
+    public async Task EachHttpCallAndItsSqlAreLoggedToTheConsole()
+    {
+        var console = new StringWriter();
+        var original = Console.Out;
+        Console.SetOut(console);
+        try
+        {
+            await fixture.Client.GetAsync("/products/2");
+            await fixture.Client.GetAsync("/products/98");
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+
+        var output = console.ToString();
+        Assert.Matches(@"HTTP GET /products/2 responded 200 in [\d.]+ ms", output);
+        Assert.Matches(@"HTTP GET /products/98 responded 404 in [\d.]+ ms", output);
+        // The SQL, with the value of its parameter
+        Assert.Contains("Executed DbCommand", output);
+        Assert.Contains("@id='98'", output);
+    }
 }

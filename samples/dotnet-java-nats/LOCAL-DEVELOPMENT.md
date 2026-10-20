@@ -43,6 +43,11 @@ samples/dotnet-java-nats/local_run.sh            # keeps running until Ctrl+C
 samples/dotnet-java-nats/local_run.sh --check    # only checks both mappings, then stops
 ```
 
+It prints the logs of both services in the terminal as they come, each line prefixed with `[catalog-service]` or
+`[sales-service]`: one line per HTTP call (`HTTP GET /orders responded 200 in 35 ms`) and each SQL statement (see
+[6. Read the SQL](#6-read-the-sql)). They are also kept in `samples/dotnet-java-nats/build/logs/`. `run.sh` does the
+same.
+
 Its defaults are the connection settings of FxMap's sample services. Change any of them with an environment variable,
 e.g. `PG_PASSWORD=secret samples/dotnet-java-nats/local_run.sh`:
 
@@ -146,7 +151,9 @@ out, since its product fields are resolved field by field.
 
 ## 6. Read the SQL
 
-Both services print each SQL statement to the console, with the values of its parameters:
+Both services print one line per HTTP call (`HTTP GET /orders responded 200 in 35 ms`; Serilog's request logging in
+catalog-service, `RequestLoggingFilter` in sales-service) and each SQL statement to the console, with the values of
+its parameters:
 
 - **catalog-service** logs with Serilog to the console. `Microsoft.EntityFrameworkCore.Database.Command` at
   `Information` (in the `Serilog` section of `appsettings.json`) prints each command EF Core runs, and
