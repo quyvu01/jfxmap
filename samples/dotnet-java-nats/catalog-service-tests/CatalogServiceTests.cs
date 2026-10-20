@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using CatalogService.Mapping;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Testcontainers.Nats;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -16,6 +19,8 @@ public sealed class CatalogFixture : IAsyncLifetime
         .WithDatabase("catalog").Build();
     private readonly NatsContainer _nats = new NatsBuilder("nats:2.11").Build();
     private WebApplicationFactory<Program>? _factory;
+
+    public IServiceProvider Services => _factory!.Services;
 
     public SalesStandIn Sales { get; private set; } = null!;
     public HttpClient Client { get; private set; } = null!;
@@ -104,5 +109,62 @@ public sealed class CatalogServiceTests(CatalogFixture fixture) : IClassFixture<
         Assert.Equal("Accessories", orders[0].CategoryName);
         Assert.Equal("MacBook Air 15", orders[1].ProductName);
         Assert.Equal("Laptops", orders[1].CategoryName);
+    }
+
+    private async Task<JsonElement> GraphQl(string query)
+    {
+        var response = await fixture.Client.PostAsJsonAsync("/graphql", new { query });
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(response.IsSuccessStatusCode, body.ToString());
+        Assert.False(body.TryGetProperty("errors", out var errors), errors.ToString());
+        return body.GetProperty("data");
+    }
+
+    [Fact]
+    public async Task GraphQlFillsTheSelectedCustomerFieldsOverNats()
+    {
+        var data = await GraphQl("{ reviews { id productName customerName customerCity customerOrderCount } }");
+
+        var reviews = data.GetProperty("reviews").EnumerateArray().ToList();
+        Assert.Equal(4, reviews.Count);
+        Assert.Equal("ThinkPad X1 Carbon", reviews[0].GetProperty("productName").GetString());
+        Assert.Equal("Alice", reviews[0].GetProperty("customerName").GetString());
+        Assert.Equal("Hanoi", reviews[0].GetProperty("customerCity").GetString());
+        Assert.Equal(2, reviews[0].GetProperty("customerOrderCount").GetInt32());
+        Assert.Equal("Bob", reviews[2].GetProperty("customerName").GetString());
+        Assert.Equal(JsonValueKind.Null, reviews[3].GetProperty("customerName").ValueKind);
+    }
+
+    [Fact]
+    public async Task GraphQlOneReviewAndTheProducts()
+    {
+        var data = await GraphQl(
+            "{ review(id: 3) { customerEmail } missing: review(id: 99) { id } products { name price category } }");
+
+        Assert.Equal("bob@test", data.GetProperty("review").GetProperty("customerEmail").GetString());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("missing").ValueKind);
+        var products = data.GetProperty("products").EnumerateArray().ToList();
+        Assert.Equal(5, products.Count);
+        Assert.Equal("Laptops", products[0].GetProperty("category").GetString());
+        Assert.Equal(1899.00m, products[0].GetProperty("price").GetDecimal());
+    }
+
+    [Fact]
+    public async Task SwaggerDescribesTheRestEndpoints()
+    {
+        var document = await fixture.Client.GetFromJsonAsync<JsonElement>("/swagger/v1/swagger.json");
+        var paths = document.GetProperty("paths").EnumerateObject().Select(p => p.Name).ToList();
+
+        Assert.Equal(["/products", "/products/{id}", "/reviews", "/reviews/{id}"], paths.Order());
+        Assert.Equal(HttpStatusCode.OK, (await fixture.Client.GetAsync("/swagger/index.html")).StatusCode);
+    }
+
+    [Fact]
+    public void TheSqlCommandsOfEfCoreAreLogged()
+    {
+        var loggers = fixture.Services.GetRequiredService<ILoggerFactory>();
+
+        Assert.True(loggers.CreateLogger("Microsoft.EntityFrameworkCore.Database.Command").IsEnabled(LogLevel.Information));
+        Assert.False(loggers.CreateLogger("Microsoft.EntityFrameworkCore.Query").IsEnabled(LogLevel.Information));
     }
 }

@@ -15,6 +15,9 @@ import io.nats.client.Nats;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
@@ -93,11 +96,25 @@ class SalesServiceTest {
         POSTGRES.stop();
     }
 
+    private static String url(String path) {
+        return "http://localhost:" + context.getEnvironment().getProperty("local.server.port") + path;
+    }
+
     private static HttpResponse<String> get(String path) throws Exception {
-        var port = context.getEnvironment().getProperty("local.server.port");
-        return HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).build(),
+        return HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(url(path))).build(),
                 HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** The data of a GraphQL query, once it has no errors. */
+    private static String graphQl(String query) throws Exception {
+        var body = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(url("/graphql")))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(
+                                "{\"query\":\"" + query.replace("\"", "\\\"") + "\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString()).body();
+        assertThat(JsonPath.<Object>read(body, "$")).as(body).asString().doesNotContain("errors");
+        return body;
     }
 
     @Test
@@ -156,5 +173,50 @@ class SalesServiceTest {
                 tuple("CustomerEmail", "\"alice@example.com\""),
                 tuple("City", "\"Hanoi\""),
                 tuple("Orders:count", "3"));
+    }
+
+    @Test
+    void graphQlFillsTheSelectedProductFieldsOverNats() throws Exception {
+        var body = graphQl("{ orders { id customerName productName categoryName } }");
+
+        assertThat(JsonPath.<List<String>>read(body, "$.data.orders[*].id")).containsExactly("1", "2", "3", "4", "5");
+        assertThat(JsonPath.<String>read(body, "$.data.orders[0].customerName")).isEqualTo("Alice Nguyen");
+        assertThat(JsonPath.<String>read(body, "$.data.orders[0].productName")).isEqualTo("Laptop");
+        assertThat(JsonPath.<String>read(body, "$.data.orders[0].categoryName")).isEqualTo("Laptops");
+        assertThat(JsonPath.<String>read(body, "$.data.orders[1].productName")).isEqualTo("Dock");
+        // Product 3 is unknown to the stand-in
+        assertThat(JsonPath.<String>read(body, "$.data.orders[2].productName")).isNull();
+    }
+
+    @Test
+    void graphQlOneOrderAndTheCustomers() throws Exception {
+        var body = graphQl("{ order(id: 2) { quantity unitPrice } missing: order(id: 99) { id } "
+                + "customers { name city } }");
+
+        assertThat(JsonPath.<Integer>read(body, "$.data.order.quantity")).isEqualTo(2);
+        assertThat(JsonPath.<Double>read(body, "$.data.order.unitPrice")).isEqualTo(100.0);
+        assertThat(JsonPath.<Object>read(body, "$.data.missing")).isNull();
+        assertThat(JsonPath.<List<String>>read(body, "$.data.customers[*].name"))
+                .containsExactly("Alice Nguyen", "Bob Martin", "Carol Tran");
+    }
+
+    @Test
+    void swaggerDescribesTheRestEndpoints() throws Exception {
+        var document = get("/v3/api-docs").body();
+
+        assertThat(JsonPath.<java.util.Map<String, Object>>read(document, "$.paths"))
+                .containsOnlyKeys("/orders", "/orders/{id}", "/customers");
+        assertThat(get("/swagger-ui/index.html").statusCode()).isEqualTo(200);
+        // GraphiQL redirects to itself with the path of the endpoint
+        assertThat(get("/graphiql?path=/graphql").statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void logsTheSqlItRunsWithItsParameters(CapturedOutput output) throws Exception {
+        get("/orders/3");
+
+        assertThat(output.getOut()).contains("org.hibernate.SQL").contains("from")
+                .contains("sales_order").contains("binding parameter (1:BIGINT) <- [3]");
     }
 }

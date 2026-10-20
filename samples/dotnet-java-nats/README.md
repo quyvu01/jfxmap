@@ -46,17 +46,16 @@ curl localhost:5080/products      # the catalog alone
 curl localhost:8090/customers     # the customers alone
 ```
 
-Or run each part yourself:
+Both services also have Swagger and GraphQL, and print each SQL statement they run to the console:
 
-```sh
-docker compose -f samples/dotnet-java-nats/docker-compose.yml up -d --wait
-dotnet run --project samples/dotnet-java-nats/catalog-service
-./gradlew :samples:dotnet-java-nats:sales-service:bootRun
-```
+| | catalog-service (.NET) | sales-service (Java) |
+|---|---|---|
+| Swagger UI | http://localhost:5080/swagger | http://localhost:8090/swagger-ui.html |
+| GraphQL | http://localhost:5080/graphql (Hot Chocolate + FxMap.HotChocolate) | http://localhost:8090/graphql, IDE on /graphiql (Spring for GraphQL + jfxmap-graphql) |
+| SQL in the console | Serilog, EF Core's `Database.Command` logs | `org.hibernate.SQL` and `org.hibernate.orm.jdbc.bind` |
 
-To change the catalog's schema, edit the model and add a migration (`dotnet tool install -g dotnet-ef`, then
-`dotnet ef migrations add <Name>` in `catalog-service`); the service applies it when it starts. On the Java side, add
-a `V3__....sql` next to the others.
+To run each service yourself (from a terminal or an IDE), try the GraphQL queries, read the SQL or change the data,
+see [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
 
 ## Test
 

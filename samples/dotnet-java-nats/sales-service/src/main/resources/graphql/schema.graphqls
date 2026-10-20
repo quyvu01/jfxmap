@@ -1,0 +1,25 @@
+type Query {
+    orders: [OrderResponse!]!
+    order(id: ID!): OrderResponse
+    customers: [CustomerResponse!]!
+}
+
+# productName, unitPrice and categoryName are resolved by jfxmap from catalog-service (.NET) over NATS: only the ones
+# a query selects are asked for, in one request per query
+type OrderResponse {
+    id: ID!
+    customerId: ID!
+    customerName: String
+    productId: Int!
+    quantity: Int!
+    productName: String
+    unitPrice: Float
+    categoryName: String
+}
+
+type CustomerResponse {
+    id: ID!
+    name: String!
+    email: String!
+    city: String
+}

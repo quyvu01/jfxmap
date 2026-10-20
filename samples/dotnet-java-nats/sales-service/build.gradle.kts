@@ -18,9 +18,12 @@ dependencies {
     implementation(project(":jfxmap-spring-boot-starter"))
     implementation(project(":jfxmap-jpa"))
     implementation(project(":jfxmap-nats"))
+    implementation(project(":jfxmap-graphql"))
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-flyway")
+    implementation("org.springframework.boot:spring-boot-starter-graphql")
+    implementation(libs.springdoc.webmvc.ui)
     runtimeOnly("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
 
