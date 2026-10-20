@@ -55,7 +55,8 @@ start() {
 wait_for() {
   local name="$1" url="$2" pid="$3"
   for _ in $(seq 1 120); do
-    if curl -fs "$url" >/dev/null 2>&1; then echo "$name is up: $url"; return 0; fi
+    # Up once it answers with its seeded data: the seeding runs just after the web server starts
+    if [[ "$(curl -fs "$url" 2>/dev/null || true)" == "[{"* ]]; then echo "$name is up: $url"; return 0; fi
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "$name stopped while starting; the end of its log:" >&2
       tail -n 40 "$logs/$name.log" >&2
