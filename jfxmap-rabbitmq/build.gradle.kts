@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: the RabbitMQ transport, compatible with FxMap.RabbitMq"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

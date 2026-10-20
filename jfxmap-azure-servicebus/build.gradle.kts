@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: the Azure Service Bus transport, compatible with FxMap.Azure.ServiceBus"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

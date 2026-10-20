@@ -21,6 +21,8 @@ graphql-java = "25.0"
 spring-graphql = "2.0.5"
 mssql-jdbc = "13.4.0.jre11"
 opentelemetry = "1.62.0"
+jmh = "1.37"
+jmhPlugin = "0.7.3"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -73,3 +75,4 @@ opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testi
 [plugins]
 protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+jmh = { id = "me.champeau.jmh", version.ref = "jmhPlugin" }

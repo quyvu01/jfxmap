@@ -16,6 +16,8 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build
+      # The benchmarks compile, and every library module and the BOM still publish (not run, not uploaded)
+      - run: ./gradlew :benchmarks:jmhJar publishToMavenLocal publishAllPublicationsToStagingRepository
 
   # The run scripts of the samples, on each OS they support: start both services and check /orders
   sample-scripts:

@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: Spring Boot auto-configuration of the mapper, handlers and transports"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

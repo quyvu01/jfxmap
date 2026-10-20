@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: the NATS transport, compatible with FxMap.Nats"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

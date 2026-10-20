@@ -211,6 +211,55 @@ Java 21 and the Gradle wrapper:
 The integration tests start MongoDB, NATS, RabbitMQ, Kafka, LocalStack and the Service Bus emulator with
 Testcontainers, so they need Docker.
 
+## BOM
+
+`io.github.quyvu01:jfxmap-bom` holds the version of every jfxmap module, so the modules are declared without one.
+Gradle:
+
+```kotlin
+dependencies {
+    implementation(platform("io.github.quyvu01:jfxmap-bom:0.1.0-SNAPSHOT"))
+    implementation("io.github.quyvu01:jfxmap-spring-boot-starter")
+    implementation("io.github.quyvu01:jfxmap-grpc")
+}
+```
+
+Maven:
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.github.quyvu01</groupId>
+      <artifactId>jfxmap-bom</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+The modules are not on Maven Central yet: `./gradlew publishToMavenLocal` puts them in `~/.m2`, and
+`./gradlew publishAllPublicationsToStagingRepository` lays out the bundle for the Central Portal in
+`build/staging-deploy` (signed when `ORG_GRADLE_PROJECT_signingInMemoryKey` and
+`ORG_GRADLE_PROJECT_signingInMemoryKeyPassword` are set). Every `jfxmap-*` project is published, and listed in the
+BOM, without a line of its own; `./gradlew build` checks the generated POMs (`:jfxmap-bom:verifyPoms`).
+
+## Benchmarks
+
+[benchmarks/](benchmarks/) has JMH benchmarks of the expression parser (simple, medium and complex expressions), of
+in-memory mapping (`DistributedMapper` over `LocalRequestClient` and `InMemoryQueryHandler`, 1, 100 and 10,000 DTOs
+with navigations, an aggregation, a chained rule and nested DTOs) and of the JSON wire messages. `./gradlew build`
+compiles them and runs their test, not the benchmarks:
+
+```sh
+./gradlew :benchmarks:jmhJar
+java -jar benchmarks/build/libs/benchmarks-jmh.jar                     # all, with the default iterations
+java -jar benchmarks/build/libs/benchmarks-jmh.jar MappingBenchmark -p dtos=100 -wi 1 -i 3 -f 1   # one, briefly
+./gradlew :benchmarks:jmh -PjmhIncludes=ExpressionParser               # or through Gradle
+```
+
 ## Expressions
 
 ```java

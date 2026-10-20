@@ -2,6 +2,8 @@ plugins {
     `java-library`
 }
 
+description = "FxMap for Java: the FxMap expression language (tokenizer, parser and in-memory evaluator)"
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
