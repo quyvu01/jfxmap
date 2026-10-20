@@ -1,0 +1,33 @@
+# What the two services need: NATS, and one PostgreSQL with a database for each (catalog for .NET, sales for Java).
+# The run scripts start it; by hand: docker compose -f samples/dotnet-java-nats/docker-compose.yml up -d --wait
+name: jfxmap-dotnet-java-nats
+
+services:
+  nats:
+    image: nats:2.11-alpine
+    command: ["-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      # 5433, so that a PostgreSQL already running on 5432 is not in the way
+      - "5433:5432"
+    volumes:
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
+    healthcheck:
+      # Over TCP: the server that runs postgres-init.sql listens only on its socket
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "sales"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

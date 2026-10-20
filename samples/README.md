@@ -10,6 +10,9 @@ transport and the Spring Boot starter.
 
 `UserOf` is a string key, so a .NET FxMap service that declares `UseDistributedKey("UserOf")` can take either side.
 
+[`dotnet-java-nats/`](dotnet-java-nats/README.md) does that: a .NET service on FxMap and EF Core and a Java service on
+jfxmap and JPA, each on PostgreSQL with its migrations and seed data, mapping each other's data over NATS.
+
 ## Run
 
 One script builds both services, starts user-service, waits for it, starts order-service, and prints `/orders`. Both
