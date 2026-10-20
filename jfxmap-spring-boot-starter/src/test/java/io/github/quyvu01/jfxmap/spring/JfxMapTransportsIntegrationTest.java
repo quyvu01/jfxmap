@@ -138,7 +138,7 @@ class JfxMapTransportsIntegrationTest {
                     .withBean(MongoUserConfig.class)
                     .withBean(EmailVisibility.class, () -> new EmailVisibility(true))
                     .withBean("users", MongoCollection.class, () -> users)
-                    .withPropertyValues("jfxmap.throw-if-exception=true")
+                    .withPropertyValues("jfxmap.throw-if-exception=true", "jfxmap.telemetry.enabled=false")
                     .run(context -> {
                         assertThat(context.getBean(JfxMapQueryHandlers.class).get(DistributedKeyRef.of("UserOf")))
                                 .isInstanceOf(MongoQueryHandler.class);
