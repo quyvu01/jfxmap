@@ -1,6 +1,11 @@
 package io.github.quyvu01.jfxmap.jpa;
 
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Embeddable;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.ManyToOne;
@@ -12,6 +17,7 @@ import jakarta.persistence.EntityManagerFactory;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -22,16 +28,44 @@ final class Entities {
     }
 
     static EntityManagerFactory entityManagerFactory(String name) {
+        return entityManagerFactory(name, "jdbc:h2:mem:" + name + ";DB_CLOSE_DELAY=-1", "sa", "");
+    }
+
+    /** The persistence unit on a database; its SQL statements are recorded by {@link SqlLog}. */
+    static EntityManagerFactory entityManagerFactory(String name, String url, String user, String password) {
         return new PersistenceConfiguration(name)
                 .managedClass(Country.class)
                 .managedClass(User.class)
                 .managedClass(PurchaseOrder.class)
                 .managedClass(Product.class)
                 .managedClass(Holiday.class)
-                .property(PersistenceConfiguration.JDBC_URL, "jdbc:h2:mem:" + name + ";DB_CLOSE_DELAY=-1")
-                .property(PersistenceConfiguration.JDBC_USER, "sa")
+                .property(PersistenceConfiguration.JDBC_URL, url)
+                .property(PersistenceConfiguration.JDBC_USER, user)
+                .property(PersistenceConfiguration.JDBC_PASSWORD, password)
                 .property(PersistenceConfiguration.SCHEMAGEN_DATABASE_ACTION, "drop-and-create")
+                .property("hibernate.session_factory.statement_inspector", SqlLog.class.getName())
                 .createEntityManagerFactory();
+    }
+
+    public enum Level {
+        SILVER,
+        GOLD
+    }
+
+    @Embeddable
+    public static class Address {
+        private String city;
+
+        protected Address() {
+        }
+
+        Address(String city) {
+            this.city = city;
+        }
+
+        public String getCity() {
+            return city;
+        }
     }
 
     @Entity
@@ -68,8 +102,30 @@ final class Entities {
         private Country country;
         @OneToMany(mappedBy = "user")
         private List<PurchaseOrder> orders = new ArrayList<>();
+        private int age;
+        private LocalDate birthDate;
+        private LocalDateTime createdAt;
+        private Double score;
+        @Enumerated(EnumType.STRING)
+        private Level level;
+        @Embedded
+        private Address address;
+        @ElementCollection
+        private List<String> tags = new ArrayList<>();
 
         protected User() {
+        }
+
+        User details(int age, LocalDate birthDate, LocalDateTime createdAt, Double score, Level level, Address address,
+                     List<String> tags) {
+            this.age = age;
+            this.birthDate = birthDate;
+            this.createdAt = createdAt;
+            this.score = score;
+            this.level = level;
+            this.address = address;
+            this.tags = new ArrayList<>(tags);
+            return this;
         }
 
         User(UUID id, String name, String email, Country country) {
@@ -99,6 +155,34 @@ final class Entities {
             return orders;
         }
 
+        public int getAge() {
+            return age;
+        }
+
+        public LocalDate getBirthDate() {
+            return birthDate;
+        }
+
+        public LocalDateTime getCreatedAt() {
+            return createdAt;
+        }
+
+        public Double getScore() {
+            return score;
+        }
+
+        public Level getLevel() {
+            return level;
+        }
+
+        public Address getAddress() {
+            return address;
+        }
+
+        public List<String> getTags() {
+            return tags;
+        }
+
         @Transient
         public String getNickname() {
             return name.toLowerCase();
@@ -111,8 +195,11 @@ final class Entities {
         private long id;
         private String status;
         private BigDecimal total;
+        private int quantity;
         @ManyToOne(fetch = FetchType.LAZY)
         private User user;
+        @ManyToOne(fetch = FetchType.LAZY)
+        private Product product;
 
         protected PurchaseOrder() {
         }
@@ -122,6 +209,20 @@ final class Entities {
             this.status = status;
             this.total = total;
             this.user = user;
+        }
+
+        PurchaseOrder(long id, String status, BigDecimal total, User user, int quantity, Product product) {
+            this(id, status, total, user);
+            this.quantity = quantity;
+            this.product = product;
+        }
+
+        public int getQuantity() {
+            return quantity;
+        }
+
+        public Product getProduct() {
+            return product;
         }
 
         public long getId() {

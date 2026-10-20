@@ -5,6 +5,7 @@ assertj = "3.27.4"
 jakarta-persistence = "3.2.0"
 hibernate = "7.4.5.Final"
 h2 = "2.4.240"
+postgresql = "42.7.7"
 grpc = "1.83.1"
 protobuf = "4.35.1"
 protobufPlugin = "0.9.5"
@@ -30,6 +31,7 @@ assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 jakarta-persistence = { module = "jakarta.persistence:jakarta.persistence-api", version.ref = "jakarta-persistence" }
 hibernate-core = { module = "org.hibernate.orm:hibernate-core", version.ref = "hibernate" }
 h2 = { module = "com.h2database:h2", version.ref = "h2" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 grpc-bom = { module = "io.grpc:grpc-bom", version.ref = "grpc" }
 grpc-api = { module = "io.grpc:grpc-api" }
 grpc-stub = { module = "io.grpc:grpc-stub" }
@@ -50,6 +52,7 @@ testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupit
 testcontainers-mongodb = { module = "org.testcontainers:testcontainers-mongodb" }
 testcontainers-rabbitmq = { module = "org.testcontainers:testcontainers-rabbitmq" }
 testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka" }
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
 testcontainers-localstack = { module = "org.testcontainers:testcontainers-localstack" }
 testcontainers-azure = { module = "org.testcontainers:testcontainers-azure" }
 testcontainers-mssqlserver = { module = "org.testcontainers:testcontainers-mssqlserver" }

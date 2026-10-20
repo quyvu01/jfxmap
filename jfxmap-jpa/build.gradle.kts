@@ -16,6 +16,7 @@ repositories {
 
 dependencies {
     api(project(":jfxmap-core"))
+    implementation(project(":jfxmap-expression"))
     api(libs.jakarta.persistence)
 
     testImplementation(platform(libs.junit.bom))
@@ -24,6 +25,11 @@ dependencies {
     testRuntimeOnly(libs.junit.launcher)
     testImplementation(libs.hibernate.core)
     testRuntimeOnly(libs.h2)
+    // The integration tests run against the real PostgreSQL in Docker
+    testImplementation(platform(libs.testcontainers.bom))
+    testImplementation(libs.testcontainers.junit)
+    testImplementation(libs.testcontainers.postgresql)
+    testRuntimeOnly(libs.postgresql)
 }
 
 tasks.withType<JavaCompile>().configureEach {
