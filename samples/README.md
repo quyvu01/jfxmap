@@ -12,13 +12,27 @@ transport and the Spring Boot starter.
 
 ## Run
 
+One script builds both services, starts user-service, waits for it, starts order-service, and prints `/orders`. Both
+keep running until Ctrl+C; their logs are in `samples/build/logs/`. It needs Java 21 (on PATH or in `JAVA_HOME`).
+
+| OS | Command |
+|---|---|
+| macOS, Linux | `samples/run.sh` |
+| Windows (cmd or double-click) | `samples\run.cmd` |
+| Windows (PowerShell) | `samples\run.ps1` |
+
+Add `--check` (`-Check` on Windows) to only check that `/orders` shows the users' fields, then stop both; CI runs that
+on all three systems.
+
+Then:
+
 ```sh
-./gradlew :samples:user-service:bootRun     # in one terminal
-./gradlew :samples:order-service:bootRun    # in another
-curl localhost:8082/orders                  # every order with its user's fields, in one gRPC call
+curl localhost:8082/orders      # every order with its user's fields, in one gRPC call
 curl localhost:8082/orders/2
 curl localhost:8081/users
 ```
+
+Or start each one yourself: `./gradlew :samples:user-service:bootRun`, then `./gradlew :samples:order-service:bootRun`.
 
 ## Test
 
