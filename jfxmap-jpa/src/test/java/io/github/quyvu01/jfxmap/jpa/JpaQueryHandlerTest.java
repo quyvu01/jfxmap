@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
@@ -188,9 +189,11 @@ class JpaQueryHandlerTest {
                 .forEach(i -> ids.add(new UUID(0, i + 100).toString()));
         ids.add(ALICE.toString());
 
-        var response = handle(handler, ids, (String) null);
+        var response = handle(handler, ids, null, "Orders:count", "Orders:orderBy(Id).{Id}");
 
-        assertThat(response.items()).extracting(DataResponse::id).containsExactly(ALICE.toString());
+        assertThat(response.items()).containsExactly(new DataResponse(ALICE.toString(), List.of(
+                new ValueResponse(null, "\"Alice\""), new ValueResponse("Orders:count", "3"),
+                new ValueResponse("Orders:orderBy(Id).{Id}", "[{\"Id\":1},{\"Id\":2},{\"Id\":3}]"))));
     }
 
     @Test
@@ -212,8 +215,10 @@ class JpaQueryHandlerTest {
         var handler = new JpaQueryHandler<>(new UserConfig(), closed);
         closed.close();
 
-        assertThat(handler.handle(new MapRequest(List.of(ALICE.toString()), List.of("Name")), MapContext.empty())
-                .toCompletableFuture()).isCompletedExceptionally();
+        var future = handler.handle(new MapRequest(List.of(ALICE.toString()), List.of("Name")), MapContext.empty())
+                .toCompletableFuture();
+
+        assertThatThrownBy(future::join).isInstanceOf(CompletionException.class);
     }
 
     @Test
