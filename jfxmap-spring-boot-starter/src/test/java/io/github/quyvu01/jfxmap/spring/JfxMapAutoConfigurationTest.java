@@ -7,6 +7,7 @@ import io.github.quyvu01.jfxmap.exception.DistributedMapException;
 import io.github.quyvu01.jfxmap.grpc.FxMapGrpcService;
 import io.github.quyvu01.jfxmap.grpc.GrpcRequestClient;
 import io.github.quyvu01.jfxmap.jpa.JpaQueryHandler;
+import io.github.quyvu01.jfxmap.mongodb.MongoQueryHandler;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.response.ItemsResponse;
 import io.github.quyvu01.jfxmap.spring.Fixtures.EmailVisibility;
@@ -92,7 +93,7 @@ class JfxMapAutoConfigurationTest {
         runner.withBean(UserConfig.class)
                 .run(context -> assertThat(context.getBean(JfxMapQueryHandlers.class).all()).isEmpty());
         runner.withBean(UserConfig.class)
-                .withClassLoader(new FilteredClassLoader(JpaQueryHandler.class))
+                .withClassLoader(new FilteredClassLoader(JpaQueryHandler.class, MongoQueryHandler.class))
                 .withBean(EntityManagerFactory.class, () -> Fixtures.usersDatabase("starter-no-jpa"))
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(EntityQueryHandlerFactory.class);
