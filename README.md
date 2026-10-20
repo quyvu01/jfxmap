@@ -331,10 +331,9 @@ Maven:
 </dependencyManagement>
 ```
 
-The modules are not on Maven Central yet: `./gradlew publishToMavenLocal` puts them in `~/.m2`, and
-`./gradlew publishAllPublicationsToStagingRepository` lays out the bundle for the Central Portal in
-`build/staging-deploy` (signed when `ORG_GRADLE_PROJECT_signingInMemoryKey` and
-`ORG_GRADLE_PROJECT_signingInMemoryKeyPassword` are set). Every `jfxmap-*` project is published, and listed in the
+The modules are not on Maven Central yet: `./gradlew publishToMavenLocal` puts them in `~/.m2`.
+[RELEASING.md](RELEASING.md) says how a release reaches Maven Central (a `v<version>` tag runs
+[release.yml](.github/workflows/release.yml)). Every `jfxmap-*` project is published, and listed in the
 BOM, without a line of its own; `./gradlew build` checks the generated POMs (`:jfxmap-bom:verifyPoms`).
 
 ## Benchmarks
