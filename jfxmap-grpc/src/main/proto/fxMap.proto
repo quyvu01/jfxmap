@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+
+// The FxMap 5.1.1 wire contract, unchanged so that Java and .NET services call each other. Only the java_*
+// options are added; they do not change what travels on the wire.
+option csharp_namespace = "FxMap.Grpc";
+option java_package = "io.github.quyvu01.jfxmap.grpc.proto";
+option java_multiple_files = true;
+option java_outer_classname = "FxMapProto";
+
+package FxMapTransport;
+
+service FxMapTransportService {
+  rpc GetItems (GetFxMapGrpcQuery) returns (FxMapItemsGrpcResponse);
+  rpc GetDistributedKeys (GetDistributedKeysQuery) returns (DistributedKeyTypeResponse);
+}
+
+message GetFxMapGrpcQuery {
+  repeated string selector_ids = 1;
+  google.protobuf.StringValue expression = 2;
+  google.protobuf.StringValue distributed_key_assembly_type = 3;
+}
+
+// An expression of the request that the owner could not build (see ItemsResponse.Errors)
+message ExpressionErrorGrpc {
+  google.protobuf.StringValue expression = 1;
+  google.protobuf.StringValue message = 2;
+}
+
+message FxMapItemsGrpcResponse {
+  repeated ItemGrpc items = 1;
+  repeated ExpressionErrorGrpc errors = 2;
+}
+
+message GetDistributedKeysQuery {
+
+}
+
+message DistributedKeyTypeResponse {
+  repeated string distributed_key_types = 1;
+}
+
+message ItemGrpc {
+  string id = 1;
+  repeated FxMapValueItemGrpc fxmap_values = 2;
+}
+message FxMapValueItemGrpc {
+  google.protobuf.StringValue expression = 1;
+  google.protobuf.StringValue value = 2;
+}
