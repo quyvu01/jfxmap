@@ -14,6 +14,11 @@ nats = "2.26.4"
 rabbitmq = "5.30.0"
 kafka = "4.2.1"
 testcontainers = "2.0.5"
+awssdk = "2.57.0"
+azure-servicebus = "7.18.1"
+graphql-java = "25.0"
+spring-graphql = "2.0.5"
+mssql-jdbc = "13.4.0.jre11"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -45,6 +50,17 @@ testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupit
 testcontainers-mongodb = { module = "org.testcontainers:testcontainers-mongodb" }
 testcontainers-rabbitmq = { module = "org.testcontainers:testcontainers-rabbitmq" }
 testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka" }
+testcontainers-localstack = { module = "org.testcontainers:testcontainers-localstack" }
+testcontainers-azure = { module = "org.testcontainers:testcontainers-azure" }
+testcontainers-mssqlserver = { module = "org.testcontainers:testcontainers-mssqlserver" }
+mssql-jdbc = { module = "com.microsoft.sqlserver:mssql-jdbc", version.ref = "mssql-jdbc" }
+awssdk-sqs = { module = "software.amazon.awssdk:sqs", version.ref = "awssdk" }
+azure-servicebus = { module = "com.azure:azure-messaging-servicebus", version.ref = "azure-servicebus" }
+graphql-java = { module = "com.graphql-java:graphql-java", version.ref = "graphql-java" }
+spring-graphql = { module = "org.springframework.graphql:spring-graphql", version.ref = "spring-graphql" }
+spring-boot-graphql = { module = "org.springframework.boot:spring-boot-graphql" }
+spring-web = { module = "org.springframework:spring-web" }
+reactor-core = { module = "io.projectreactor:reactor-core" }
 
 [plugins]
 protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
