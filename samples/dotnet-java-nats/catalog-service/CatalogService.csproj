@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- The .NET half of the sample: owns the catalog (EF Core, PostgreSQL) and talks to sales-service with FxMap over NATS -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>CatalogService</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FxMap" Version="5.1.1" />
+    <PackageReference Include="FxMap.EntityFrameworkCore" Version="5.1.1" />
+    <PackageReference Include="FxMap.Nats" Version="5.1.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.13" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

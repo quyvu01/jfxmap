@@ -39,6 +39,27 @@ jobs:
         shell: cmd
         run: samples\run.cmd -Check
 
+  # samples/dotnet-java-nats: a .NET service (FxMap, EF Core) and a Java one (jfxmap, JPA) mapping each other over NATS
+  sample-dotnet-java-nats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: gradle/actions/setup-gradle@v4
+      - run: dotnet test samples/dotnet-java-nats/catalog-service-tests
+      - run: dotnet publish samples/dotnet-java-nats/catalog-service -c Release -o samples/dotnet-java-nats/build/catalog-service
+      - run: ./gradlew :samples:dotnet-java-nats:integration-test:test
+        env:
+          JFXMAP_SAMPLE_CATALOG: dotnet ${{ github.workspace }}/samples/dotnet-java-nats/build/catalog-service/CatalogService.dll
+      - run: samples/dotnet-java-nats/run.sh --check
+      - run: pwsh samples/dotnet-java-nats/run.ps1 -Check
+
   # Java and .NET FxMap 5.1.1 asking each other over NATS, RabbitMQ, Kafka, SQS and Service Bus (interop/)
   dotnet-interop:
     runs-on: ubuntu-latest
