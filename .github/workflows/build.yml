@@ -59,6 +59,10 @@ jobs:
           JFXMAP_SAMPLE_CATALOG: dotnet ${{ github.workspace }}/samples/dotnet-java-nats/build/catalog-service/CatalogService.dll
       - run: samples/dotnet-java-nats/run.sh --check
       - run: pwsh samples/dotnet-java-nats/run.ps1 -Check
+      # local_run.sh, on a PostgreSQL and a NATS that already run (here those of docker-compose.yml)
+      - run: |
+          docker compose -f samples/dotnet-java-nats/docker-compose.yml up -d --wait
+          PG_PORT=5433 PG_PASSWORD=postgres samples/dotnet-java-nats/local_run.sh --check
 
   # Java and .NET FxMap 5.1.1 asking each other over NATS, RabbitMQ, Kafka, SQS and Service Bus (interop/)
   dotnet-interop:

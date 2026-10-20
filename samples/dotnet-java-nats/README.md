@@ -32,6 +32,11 @@ one mapped from the other. Everything keeps running until Ctrl+C, then the conta
 | Windows (cmd or double-click) | `samples\dotnet-java-nats\run.cmd` |
 | Windows (PowerShell) | `samples\dotnet-java-nats\run.ps1` |
 
+If PostgreSQL and NATS already run on your machine, `samples/dotnet-java-nats/local_run.sh` starts only the two
+services on them, with the connection settings of FxMap's sample services by default (`localhost:5432`, user
+`postgres`, password `Abcd@2021`; `nats://localhost:4222`); see
+[LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md#with-your-own-postgresql-and-nats).
+
 Add `--check` (`-Check` on Windows) to only check both mappings and stop. It uses ports 4222 (NATS), 5433
 (PostgreSQL), 5080 and 8090.
 

@@ -33,6 +33,32 @@ data, remove the containers with their volume and start them again:
 docker compose -f samples/dotnet-java-nats/docker-compose.yml down -v
 ```
 
+### With your own PostgreSQL and NATS
+
+If PostgreSQL and NATS already run on your machine (in your own containers, for example), skip the step above and let
+`local_run.sh` build and start both services on them:
+
+```sh
+samples/dotnet-java-nats/local_run.sh            # keeps running until Ctrl+C
+samples/dotnet-java-nats/local_run.sh --check    # only checks both mappings, then stops
+```
+
+Its defaults are the connection settings of FxMap's sample services. Change any of them with an environment variable,
+e.g. `PG_PASSWORD=secret samples/dotnet-java-nats/local_run.sh`:
+
+| Variable | Default | What |
+|---|---|---|
+| `PG_HOST`, `PG_PORT` | `localhost`, `5432` | the PostgreSQL server |
+| `PG_USER`, `PG_PASSWORD` | `postgres`, `Abcd@2021` | its user |
+| `CATALOG_DB` | `FxMapSampleCatalog` | the database of catalog-service; EF Core creates it when it is missing |
+| `SALES_DB` | `postgres` | an existing database for sales-service |
+| `SALES_SCHEMA` | `fxmap_sample_sales` | the schema of sales-service in `SALES_DB`; Flyway creates it when it is missing |
+| `NATS_URL` | `nats://localhost:4222` | the NATS server |
+
+sales-service uses a schema of an existing database because Flyway, unlike EF Core, does not create databases. Both
+services seed their data only once, so the script can run again on the same databases. To start over, drop
+`FxMapSampleCatalog` and the schema `fxmap_sample_sales`.
+
 ## 3. Start catalog-service (.NET)
 
 ```sh
