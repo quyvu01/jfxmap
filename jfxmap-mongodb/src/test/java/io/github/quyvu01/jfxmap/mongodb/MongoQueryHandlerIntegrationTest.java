@@ -23,8 +23,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
+import org.bson.Document;
+import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.mongodb.MongoDBContainer;
 
 import java.math.BigDecimal;
@@ -32,15 +32,45 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** The handler against a real MongoDB server. */
-@Testcontainers
 class MongoQueryHandlerIntegrationTest {
-    @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.0");
+    // A MongoDB container that is up and answers a ping, with a client on it
+    record Mongo(MongoDBContainer container, MongoClient client) {
+        static Mongo start() {
+            // mongod logs this once it accepts connections, which a bound port alone does not promise
+            var container = new MongoDBContainer("mongo:8.0")
+                    .waitingFor(Wait.forLogMessage("(?i).*waiting for connections.*", 1));
+            container.start();
+            // getConnectionString, not getReplicaSetUrl: that one asks Docker whether the container still runs
+            // and throws "MongoDBContainer should be started first" when that Docker call fails or says no
+            return new Mongo(container, MongoClients.create(MongoClientSettings.builder()
+                    .applyConnectionString(new ConnectionString(container.getConnectionString()))
+                    .applyToClusterSettings(b -> b.serverSelectionTimeout(30, TimeUnit.SECONDS))
+                    .uuidRepresentation(UuidRepresentation.STANDARD)
+                    .codecRegistry(CodecRegistries.fromRegistries(MongoClientSettings.getDefaultCodecRegistry(),
+                            CodecRegistries.fromProviders(PojoCodecProvider.builder().automatic(true).build())))
+                    .build()));
+        }
+
+        void ping() {
+            try {
+                client.getDatabase("admin").runCommand(new Document("ping", 1));
+            } catch (RuntimeException e) {
+                throw new IllegalStateException("MongoDB did not answer a ping (container running: "
+                        + container.isRunning() + "), its log:\n" + container.getLogs(), e);
+            }
+        }
+
+        void stop() {
+            client.close();
+            container.stop();
+        }
+    }
 
     // A POJO with an ObjectId stored as _id, an embedded document and a list of embedded documents
     public static class Country {
@@ -200,23 +230,18 @@ class MongoQueryHandlerIntegrationTest {
     private static final ObjectId ANN = new ObjectId();
     private static final ObjectId BOB = new ObjectId();
 
-    private static MongoClient client;
+    private static Mongo mongo;
     private static MongoDatabase database;
 
     @BeforeAll
     static void connect() {
-        client = MongoClients.create(MongoClientSettings.builder()
-                .applyConnectionString(new ConnectionString(MONGO.getReplicaSetUrl()))
-                .uuidRepresentation(UuidRepresentation.STANDARD)
-                .codecRegistry(CodecRegistries.fromRegistries(MongoClientSettings.getDefaultCodecRegistry(),
-                        CodecRegistries.fromProviders(PojoCodecProvider.builder().automatic(true).build())))
-                .build());
-        database = client.getDatabase("jfxmap");
+        mongo = StartAttempts.start(3, Mongo::start, Mongo::ping, Mongo::stop);
+        database = mongo.client().getDatabase("jfxmap");
     }
 
     @AfterAll
     static void disconnect() {
-        client.close();
+        mongo.stop();
     }
 
     @BeforeEach

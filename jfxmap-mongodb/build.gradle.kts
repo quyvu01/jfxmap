@@ -26,7 +26,6 @@ dependencies {
     testRuntimeOnly(libs.junit.launcher)
     // The integration tests run against the real MongoDB in Docker
     testImplementation(platform(libs.testcontainers.bom))
-    testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.mongodb)
 }
 
