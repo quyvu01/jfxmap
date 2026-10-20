@@ -1,8 +1,8 @@
 package io.github.quyvu01.jfxmap.grpc;
 
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
+import io.github.quyvu01.jfxmap.wire.DotNetKeyNames;
 
-import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -11,22 +11,19 @@ import java.util.Optional;
  * <p>FxMap (.NET) turns a string key ({@code UseDistributedKey("UserOf")}) into a type generated at runtime, and
  * sends that type's assembly-qualified name in {@code distributed_key_assembly_type}:
  * {@code UserOf, FxMap.DynamicDistributedKeys, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null}. jfxmap writes
- * the same string for every key, so a Java service and a .NET service that use the same string key find each other.
- * A key declared with a Java class keeps its class name in front, which only another jfxmap service knows.
+ * the same string for every key (see {@link DotNetKeyNames}), so a Java service and a .NET service that use the same
+ * string key find each other.
  */
 public final class DistributedKeyWireNames {
     /** What follows the key name in the assembly-qualified name of a .NET string key. */
-    public static final String DYNAMIC_ASSEMBLY =
-            "FxMap.DynamicDistributedKeys, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
-
-    private static final String SUFFIX = ", " + DYNAMIC_ASSEMBLY;
+    public static final String DYNAMIC_ASSEMBLY = DotNetKeyNames.DYNAMIC_ASSEMBLY;
 
     private DistributedKeyWireNames() {
     }
 
     /** The name to send for a key. */
     public static String toWire(DistributedKeyRef key) {
-        return Objects.requireNonNull(key, "key").name() + SUFFIX;
+        return DotNetKeyNames.assemblyQualifiedName(key);
     }
 
     /**
@@ -34,10 +31,6 @@ public final class DistributedKeyWireNames {
      * another .NET assembly (a key declared with a .NET type) gives nothing, since no Java key matches it.
      */
     public static Optional<DistributedKeyRef> fromWire(String wireName) {
-        if (wireName == null) return Optional.empty();
-        var name = wireName.trim();
-        if (name.endsWith(SUFFIX)) name = name.substring(0, name.length() - SUFFIX.length()).trim();
-        if (name.isEmpty() || name.contains(",")) return Optional.empty();
-        return Optional.of(new DistributedKeyRef(name));
+        return DotNetKeyNames.fromAssemblyQualifiedName(wireName);
     }
 }

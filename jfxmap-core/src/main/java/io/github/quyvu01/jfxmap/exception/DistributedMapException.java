@@ -3,6 +3,7 @@ package io.github.quyvu01.jfxmap.exception;
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
 import io.github.quyvu01.jfxmap.response.ExpressionError;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -109,6 +110,47 @@ public abstract class DistributedMapException extends RuntimeException {
         public ValueWriteFailed(Class<?> modelType, String property, Throwable cause) {
             super("The value of %s.%s could not be written: %s".formatted(modelType.getName(), property,
                     cause.getMessage()), cause);
+        }
+    }
+
+    /** The owner of a key answered with a failure (a {@code Fault} of FxMap). */
+    public static final class ReceivedFault extends DistributedMapException {
+        private final String faultId;
+        private final transient List<ExceptionInfo> exceptions;
+
+        public ReceivedFault(String faultId, List<ExceptionInfo> exceptions) {
+            super(exceptions.isEmpty() ? "The owner of the distributed key failed."
+                    : "The owner of the distributed key failed: %s: %s".formatted(exceptions.getFirst().exceptionType(),
+                    exceptions.getFirst().message()));
+            this.faultId = faultId;
+            this.exceptions = List.copyOf(exceptions);
+        }
+
+        /** The id the owner gave the fault, or {@code null}. */
+        public String faultId() {
+            return faultId;
+        }
+
+        /** The exceptions of the owner, outermost first. */
+        public List<ExceptionInfo> exceptions() {
+            return exceptions;
+        }
+
+        /**
+         * One exception of a fault.
+         *
+         * @param exceptionType the full name of its type, on the owner
+         * @param message       its message
+         * @param stackTrace    its stack trace, on the owner
+         */
+        public record ExceptionInfo(String exceptionType, String message, String stackTrace) {
+        }
+    }
+
+    /** A request was sent, but its reply did not come in time. */
+    public static final class RequestTimedOut extends DistributedMapException {
+        public RequestTimedOut(DistributedKeyRef key, Duration timeout) {
+            super("No reply for the distributed key %s came within %s.".formatted(key, timeout));
         }
     }
 }

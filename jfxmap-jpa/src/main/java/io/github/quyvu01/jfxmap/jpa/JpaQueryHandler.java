@@ -4,6 +4,7 @@ import io.github.quyvu01.jfxmap.DistributedKeyRef;
 import io.github.quyvu01.jfxmap.MapContext;
 import io.github.quyvu01.jfxmap.fluent.EntityConfigureOf;
 import io.github.quyvu01.jfxmap.provider.EntityExpressionEvaluator;
+import io.github.quyvu01.jfxmap.provider.IdConverter;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.response.ItemsResponse;
 import io.github.quyvu01.jfxmap.response.MapRequest;
