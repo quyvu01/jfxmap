@@ -13,6 +13,8 @@ import io.github.quyvu01.jfxmap.response.DataResponse;
 import io.github.quyvu01.jfxmap.response.ItemsResponse;
 import io.github.quyvu01.jfxmap.response.MapRequest;
 import io.github.quyvu01.jfxmap.response.ValueResponse;
+import io.github.quyvu01.jfxmap.supervision.ServerSupervisor;
+import io.github.quyvu01.jfxmap.supervision.SupervisorOptions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -323,5 +327,32 @@ class SqsTransportIntegrationTest {
 
     private static MessageAttributeValue string(String value) {
         return MessageAttributeValue.builder().dataType("String").stringValue(value).build();
+    }
+
+    @Test
+    void aSupervisorStartsTheServerAgainWhenItsQueueIsDeleted() throws Exception {
+        var server = SqsServer.builder(sqs, List.of(users())).waitTime(WAIT).build();
+        var supervisor = new ServerSupervisor(SupervisorOptions.builder().initialBackoff(Duration.ofMillis(100))
+                .build()).register("sqs", server);
+        closeables.add(supervisor);
+        supervisor.start();
+        var firstRun = server.whenStopped().toCompletableFuture();
+
+        sqs.deleteQueue(b -> b.queueUrl(server.queueUrls().get(USER_OF)));
+
+        // The next poll finds no queue: the run fails, and the supervisor starts the server again
+        assertThatThrownBy(() -> firstRun.get(30, TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(QueueDoesNotExistException.class);
+        var deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (!(server.isRunning() && supervisor.states().get("sqs").restartCount() == 1)
+               && System.nanoTime() < deadline) Thread.sleep(50);
+        assertThat(supervisor.states().get("sqs").restartCount()).isEqualTo(1);
+        assertThat(sqs.getQueueUrl(b -> b.queueName("fxmap--userof")).queueUrl()).isNotEmpty();
+
+        var mapper = FxMap.builder().addProfiles(new OrderDtoProfile())
+                .requestClient(client(Duration.ofSeconds(20))).throwIfException().build();
+        var dtos = List.of(new OrderDto(1), new OrderDto(2));
+        mapper.map(dtos);
+        assertThat(dtos).extracting(d -> d.userName).containsExactly("Alice", "Bob");
     }
 }

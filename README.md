@@ -6,7 +6,9 @@ Given a DTO with a foreign key (`userId`), jfxmap fills its related properties (
 service that owns the entity, batching the ids of every object into one request per entity type.
 
 > Status: early. Ported: the core, the expression language, the JPA and MongoDB data providers, the gRPC, NATS,
-> RabbitMQ, Kafka, AWS SQS and Azure Service Bus transports, a GraphQL integration and a Spring Boot starter.
+> RabbitMQ, Kafka, AWS SQS and Azure Service Bus transports, a GraphQL integration, a Spring Boot starter, the send
+> and receive pipelines with retries, the supervision of the servers, OpenTelemetry tracing and metrics, and the
+> compile-time validation of expressions.
 
 ## Modules
 
@@ -24,6 +26,7 @@ service that owns the entity, batching the ids of every object into one request 
 | `jfxmap-graphql` | FxMap.HotChocolate's counterpart, on graphql-java: `JfxMapGraphQl` resolves the mapped fields of a type through a DataLoader, so a query asks once per key for the fields it selects |
 | `jfxmap-spring-boot-starter` | Auto-configuration for Spring Boot 4.1: profile and entity configuration beans, JPA and MongoDB handlers, the server and client of each transport from `jfxmap.*` properties |
 | `jfxmap-expression` | The FxMap expression language (`Orders:where(Status = 'Done'):sum(Total)`): tokenizer, parser to a syntax tree, and an in-memory evaluator over records, JavaBeans, Maps and collections. See [expression.md](https://github.com/quyvu01/FxMap/blob/main/docs/expression.md) for the syntax |
+| `jfxmap-opentelemetry` | FxMap's telemetry for OpenTelemetry: spans and metrics around the clients and handlers, with the W3C trace context carried over the transports as FxMap carries it |
 | `jfxmap-validation` | FxMap.Analyzers' counterpart: the javac plugin `JfxMapExpressions` reports an invalid expression of a profile as a compile error (`OFX001`), and `JfxMapValidator` checks profiles and entity configurations at startup |
 
 ## Usage
@@ -131,7 +134,7 @@ Then inject `DistributedMapper`. [samples/](samples/README.md) has a user servic
 To call a .NET FxMap service, or be called by one, use a string key on both sides: `useDistributedKey("UserOf")` in
 Java and `UseDistributedKey("UserOf")` in .NET. The subjects, exchanges, queues, topics, headers and JSON match what
 FxMap 5.1.1 sends; [interop/](interop/) checks it against a real .NET FxMap service on NATS, RabbitMQ, Kafka, SQS
-(LocalStack) and Service Bus (its emulator), in both directions (`dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out`, then run
+(LocalStack) and Service Bus (its emulator), in both directions, traces included (`dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out`, then run
 `./gradlew :interop:test` with `JFXMAP_DOTNET_PROBE="dotnet $PWD/interop/dotnet-probe/out/DotnetProbe.dll"`).
 
 ## Validation
@@ -199,6 +202,94 @@ configuration is checked by running its `configure()` and checking that each exp
 expression can use. Each `ValidationProblem` names the class, the property, the expression and what is wrong. Nothing
 runs it by itself: the Java parser may reject a few constructs that FxMap's parser accepts, so call it where it fits,
 in a test or at startup.
+
+## Around the requests
+
+### Behaviors and retries
+
+FxMap's send and receive pipelines: a `SendBehavior` runs around each request a client sends (once per attempt), a
+`ReceiveBehavior` around each request a handler answers. Each one gets a `RequestContext` (the key, the ids and
+expressions, the headers) and calls `next.proceed(...)`, with the same context or a changed one:
+
+```java
+SendBehavior tenant = (request, next) -> next.proceed(request.withHeader("x-tenant", currentTenant()));
+ReceiveBehavior audit = (request, next) -> {
+    log.info("{} asked for {} ids", request.key(), request.request().selectorIds().size());
+    return next.proceed(request);
+};
+
+DistributedMapper mapper = FxMap.builder()
+        .addProfiles(new UserSummaryProfile())
+        .requestClient(transportClient)
+        .addSendBehaviors(tenant)
+        .retryPolicy(RetryPolicy.retries(3)                       // FxMap's SetRetryPolicy
+                .exponentialDelay(Duration.ofMillis(200), Duration.ofSeconds(5))
+                .shouldRetry(e -> !(e instanceof DistributedMapException.ReceivedFault)))
+        .build();
+
+QueryHandler handler = Pipelines.receive(usersHandler, List.of(audit));
+```
+
+The retry policy runs outside the send behaviors, so they run again on each attempt. JVM errors
+(`OutOfMemoryError`...) are never retried.
+
+### Supervision
+
+Each transport server (`NatsServer`, `RabbitMqServer`, `KafkaServer`, `SqsServer`, `ServiceBusServer`) is a
+`RequestServer`, whose `whenStopped()` fails when the server stops by itself: its RabbitMQ or SQS queue deleted, its
+Kafka consumer failing, its Service Bus queue missing. A `ServerSupervisor` (FxMap's) starts it again, with FxMap's
+defaults: one-for-one, at most 32 restarts a minute, a backoff from 1 second doubling up to 5 minutes, and a circuit
+breaker that holds the restarts for a minute after 3 failures in a row:
+
+```java
+ServerSupervisor supervisor = new ServerSupervisor(SupervisorOptions.builder()
+        .strategy(SupervisionStrategy.ONE_FOR_ONE)               // or ONE_FOR_ALL, REST_FOR_ONE
+        .directive(AuthenticationFailureException.class, SupervisorDirective.STOP)
+        .build())
+        .register("rabbitmq", rabbitMqServer)
+        .register("sqs", sqsServer)
+        .onHealthChange(change -> log.warn("{}: {} -> {}", change.serverId(), change.previous(), change.current()));
+supervisor.start();
+```
+
+`states()` gives the health (healthy, degraded, unhealthy, circuit open, stopped), the restart count and the last
+failure of each server.
+
+### Telemetry
+
+`jfxmap-opentelemetry` is FxMap's `ActivitySource` for OpenTelemetry: a client span `fxmap.request` around each
+request a client sends and a server span `fxmap.process` around each request a handler answers, with FxMap's
+attributes (`fxmap.distributed_key`, `fxmap.transport`, `fxmap.expressions`, `fxmap.selector_count`,
+`fxmap.item_count`, `messaging.system`, `db.system`...), and the histograms `fxmap.client.request.duration` and
+`fxmap.server.request.duration`. The trace travels in the W3C `traceparent` header, where FxMap sends and reads it, so a
+trace goes on from a Java service into a .NET one and back ([interop/](interop/) checks it on each transport):
+
+```java
+JfxMapTelemetry telemetry = JfxMapTelemetry.create(openTelemetry);
+RequestClient client = telemetry.instrument(NatsRequestClient.builder(connection).build());
+NatsServer server = NatsServer.builder(connection, telemetry.instrument(handlers)).build().start();
+```
+
+Azure Service Bus is the exception: FxMap 5.1.1 sends the trace context there in bytes, which Service Bus refuses
+("unsupported type System.Byte[]", the emulator at least), so a traced .NET client fails on it. jfxmap leaves the
+trace context out on Service Bus, and the server starts a trace of its own.
+
+### With Spring Boot
+
+The starter puts the `SendBehavior` and `ReceiveBehavior` beans around the requests, and supervises the transport
+servers it starts: a server that cannot start or that fails is started again in the background instead of failing the
+application. With `jfxmap-opentelemetry` on the classpath, it traces and measures the requests with the application's
+`OpenTelemetry` bean (or the global one, set by the Java agent):
+
+```properties
+jfxmap.retry.retries=3                  # or a RetryPolicy bean
+jfxmap.retry.delay=200ms
+jfxmap.retry.max-delay=5s               # with it, the delay doubles at each retry up to this maximum
+jfxmap.supervisor.strategy=one-for-one  # also max-restarts, max-restart-window, initial-backoff, max-backoff,
+                                        # backoff-multiplier, circuit-breaker, circuit-breaker-threshold,
+                                        # circuit-breaker-reset-time; enabled=false to start the servers directly
+jfxmap.telemetry.enabled=true
+```
 
 ## Build
 

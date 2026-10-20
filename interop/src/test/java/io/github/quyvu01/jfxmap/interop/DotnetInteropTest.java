@@ -7,14 +7,15 @@ import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
 import io.github.quyvu01.jfxmap.MapContext;
+import io.github.quyvu01.jfxmap.RequestClient;
 import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusRequestClient;
 import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusServer;
-import io.github.quyvu01.jfxmap.RequestClient;
 import io.github.quyvu01.jfxmap.fluent.EntityConfigureOf;
 import io.github.quyvu01.jfxmap.kafka.KafkaRequestClient;
 import io.github.quyvu01.jfxmap.kafka.KafkaServer;
 import io.github.quyvu01.jfxmap.nats.NatsRequestClient;
 import io.github.quyvu01.jfxmap.nats.NatsServer;
+import io.github.quyvu01.jfxmap.opentelemetry.JfxMapTelemetry;
 import io.github.quyvu01.jfxmap.provider.InMemoryQueryHandler;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.rabbitmq.RabbitMqRequestClient;
@@ -26,6 +27,11 @@ import io.github.quyvu01.jfxmap.response.ValueResponse;
 import io.github.quyvu01.jfxmap.sqs.SqsRequestClient;
 import io.github.quyvu01.jfxmap.sqs.SqsServer;
 import io.nats.client.Nats;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -43,6 +49,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.QueueDoesNotExistException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -54,8 +61,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -150,6 +159,19 @@ class DotnetInteropTest {
                 .build();
     }
 
+    /**
+     * Deletes the queue of UserOf: a long poll of a .NET owner stopped by an earlier test can still take the next
+     * request from LocalStack, which would then wait out its visibility timeout.
+     */
+    private static SqsClient withoutStalePolls(SqsClient sqs) {
+        try {
+            sqs.deleteQueue(b -> b.queueUrl(sqs.getQueueUrl(q -> q.queueName("fxmap--userof")).queueUrl()));
+        } catch (QueueDoesNotExistException e) {
+            // No earlier test created it
+        }
+        return sqs;
+    }
+
     private static ServiceBusClientBuilder serviceBusClients() {
         // The emulator answers a wait for the next session only when it times out: a short one picks up new sessions
         return new ServiceBusClientBuilder().connectionString(SERVICE_BUS.getConnectionString())
@@ -187,15 +209,16 @@ class DotnetInteropTest {
         return command;
     }
 
-    /** A .NET owner of UserOf, ready to answer. */
-    private static Process startDotnetOwner(String transport, String address) throws Exception {
-        var process = new ProcessBuilder(probe("owner", transport, address)).redirectErrorStream(true).start();
+    /** A .NET owner of UserOf, ready to answer; what it prints goes to {@code output}. */
+    private static Process startDotnetOwner(List<String> output, String... args) throws Exception {
+        var process = new ProcessBuilder(probe(args)).redirectErrorStream(true).start();
         var ready = new CompletableFuture<Void>();
         Thread.ofPlatform().daemon().start(() -> {
             try (var lines = new BufferedReader(new InputStreamReader(process.getInputStream(), UTF_8))) {
                 String line;
                 while ((line = lines.readLine()) != null) {
                     System.out.println("[dotnet owner] " + line);
+                    output.add(line);
                     if (line.contains("READY")) ready.complete(null);
                 }
             } catch (IOException e) {
@@ -209,13 +232,22 @@ class DotnetInteropTest {
         return process;
     }
 
-    /** What a .NET consumer mapped: the orders of users 1, 2 and 3. */
-    private static List<Map<String, Object>> runDotnetConsumer(String transport, String address) throws Exception {
-        var process = new ProcessBuilder(probe("consumer", transport, address)).redirectErrorStream(true).start();
+    private static Process startDotnetOwner(String transport, String address) throws Exception {
+        return startDotnetOwner(new CopyOnWriteArrayList<>(), "owner", transport, address);
+    }
+
+    /** What a .NET consumer printed, once it mapped the orders of users 1, 2 and 3. */
+    private static String runDotnetConsumer(String... args) throws Exception {
+        var process = new ProcessBuilder(probe(args)).redirectErrorStream(true).start();
         var output = new String(process.getInputStream().readAllBytes(), UTF_8);
         System.out.println("[dotnet consumer] " + output);
         assertThat(process.waitFor(3, TimeUnit.MINUTES)).isTrue();
         assertThat(process.exitValue()).as(output).isZero();
+        return output;
+    }
+
+    /** What a .NET consumer mapped: the orders of users 1, 2 and 3. */
+    private static List<Map<String, Object>> orders(String output) throws Exception {
         var result = output.lines().filter(line -> line.startsWith("RESULT ")).findFirst().orElseThrow();
         return JSON.readValue(result.substring("RESULT ".length()),
                 JSON.getTypeFactory().constructCollectionType(List.class, Map.class));
@@ -238,7 +270,7 @@ class DotnetInteropTest {
 
     private static void theDotnetConsumerMapsFromJava(String transport, String address,
                                                       AtomicReference<MapContext> seen) throws Exception {
-        var orders = runDotnetConsumer(transport, address);
+        var orders = orders(runDotnetConsumer("consumer", transport, address));
 
         assertThat(orders).extracting(o -> o.get("UserName")).containsExactly("Alice", "Bob", null);
         assertThat(orders).extracting(o -> o.get("UserEmail")).containsExactly("alice@java", "bob@java", null);
@@ -328,7 +360,7 @@ class DotnetInteropTest {
     @Test
     void aDotnetConsumerAsksAJavaOwnerOverSqs() throws Exception {
         var seen = new AtomicReference<MapContext>();
-        try (var sqs = sqsClient();
+        try (var sqs = withoutStalePolls(sqsClient());
              var server = SqsServer.builder(sqs, List.of(javaUsers(seen))).waitTime(Duration.ofSeconds(1)).build()
                      .start()) {
             theDotnetConsumerMapsFromJava("sqs", LOCALSTACK.getEndpoint().toString(), seen);
@@ -353,6 +385,178 @@ class DotnetInteropTest {
         var seen = new AtomicReference<MapContext>();
         try (var server = ServiceBusServer.builder(serviceBusClients(), List.of(javaUsers(seen))).build().start()) {
             theDotnetConsumerMapsFromJava("servicebus", SERVICE_BUS.getConnectionString(), seen);
+        }
+    }
+
+    // --- Traces: a .NET service on FxMap traced with an ActivityListener, a Java one with jfxmap-opentelemetry
+
+    /** The OpenTelemetry of the Java side of a test, and the spans it ended. */
+    private static final class JavaTraces implements AutoCloseable {
+        final InMemorySpanExporter spans = InMemorySpanExporter.create();
+        final OpenTelemetrySdk sdk = OpenTelemetrySdk.builder().setTracerProvider(SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(spans)).build()).build();
+        final JfxMapTelemetry telemetry = JfxMapTelemetry.create(sdk);
+
+        SpanData only(String name) throws InterruptedException {
+            var deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+            while (System.nanoTime() < deadline) {
+                var found = spans.getFinishedSpanItems().stream().filter(s -> s.getName().equals(name)).toList();
+                if (!found.isEmpty()) {
+                    assertThat(found).hasSize(1);
+                    return found.getFirst();
+                }
+                Thread.sleep(20);
+            }
+            throw new AssertionError("No " + name + " span in " + spans.getFinishedSpanItems());
+        }
+
+        @Override
+        public void close() {
+            sdk.close();
+        }
+    }
+
+    /** A span the probe printed: SPAN name trace-id span-id parent-span-id. */
+    record DotnetSpan(String name, String traceId, String spanId, String parentSpanId) {
+        static List<DotnetSpan> in(List<String> output) {
+            return output.stream().filter(line -> line.startsWith("SPAN ")).map(line -> line.split(" "))
+                    .map(f -> new DotnetSpan(f[1], f[2], f[3], f[4])).toList();
+        }
+    }
+
+    private static DotnetSpan dotnetSpan(List<String> output, String name) throws InterruptedException {
+        var deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < deadline) {
+            var found = DotnetSpan.in(output).stream().filter(s -> s.name().equals(name)).toList();
+            if (!found.isEmpty()) return found.getFirst();
+            Thread.sleep(50);
+        }
+        throw new AssertionError("The probe printed no " + name + " span: " + output);
+    }
+
+    /** A traced Java client asks a traced .NET owner, which continues the Java trace. */
+    private static void theDotnetOwnerContinuesTheTrace(String transport, String address,
+                                                        Function<JavaTraces, RequestClient> client) throws Exception {
+        var output = new CopyOnWriteArrayList<String>();
+        var owner = startDotnetOwner(output, "owner", transport, address, "trace");
+        try (var traces = new JavaTraces()) {
+            asksTheDotnetOwner(traces.telemetry.instrument(client.apply(traces)));
+
+            var request = traces.only("fxmap.request");
+            var process = dotnetSpan(output, "fxmap.process");
+            assertThat(process.traceId()).isEqualTo(request.getTraceId());
+            assertThat(process.parentSpanId()).isEqualTo(request.getSpanId());
+        } finally {
+            stop(owner);
+        }
+    }
+
+    /** A traced .NET consumer asks a traced Java owner, which continues the .NET trace. */
+    private static void theJavaOwnerContinuesTheTrace(String transport, String address,
+                                                      Function<QueryHandler, AutoCloseable> serve) throws Exception {
+        var seen = new AtomicReference<MapContext>();
+        try (var traces = new JavaTraces();
+             var server = serve.apply(traces.telemetry.instrument(javaUsers(seen)))) {
+            var output = runDotnetConsumer("consumer", transport, address, "trace");
+            assertThat(orders(output)).extracting(o -> o.get("UserName")).containsExactly("Alice", "Bob", null);
+
+            var request = dotnetSpan(output.lines().toList(), "fxmap.request");
+            var process = traces.only("fxmap.process");
+            assertThat(process.getTraceId()).isEqualTo(request.traceId());
+            assertThat(process.getParentSpanId()).isEqualTo(request.spanId());
+        }
+    }
+
+    @Test
+    void traceAJavaRequestIntoADotnetOwnerOverNats() throws Exception {
+        try (var connection = Nats.connect(natsUrl())) {
+            theDotnetOwnerContinuesTheTrace("nats", natsUrl(),
+                    traces -> NatsRequestClient.builder(connection).timeout(Duration.ofSeconds(30)).build());
+        }
+    }
+
+    @Test
+    void traceADotnetRequestIntoAJavaOwnerOverNats() throws Exception {
+        try (var connection = Nats.connect(natsUrl())) {
+            theJavaOwnerContinuesTheTrace("nats", natsUrl(), users -> {
+                var server = NatsServer.builder(connection, List.of(users)).build().start();
+                try {
+                    connection.flush(Duration.ofSeconds(5));
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+                return server;
+            });
+        }
+    }
+
+    @Test
+    void traceAJavaRequestIntoADotnetOwnerOverRabbitMq() throws Exception {
+        try (var connection = rabbitConnection();
+             var client = RabbitMqRequestClient.builder(connection).timeout(Duration.ofSeconds(30)).build()) {
+            theDotnetOwnerContinuesTheTrace("rabbitmq", rabbitAddress(), traces -> client);
+        }
+    }
+
+    @Test
+    void traceADotnetRequestIntoAJavaOwnerOverRabbitMq() throws Exception {
+        try (var connection = rabbitConnection()) {
+            theJavaOwnerContinuesTheTrace("rabbitmq", rabbitAddress(),
+                    users -> RabbitMqServer.builder(connection, "JavaUserService", List.of(users)).build().start());
+        }
+    }
+
+    @Test
+    void traceAJavaRequestIntoADotnetOwnerOverKafka() throws Exception {
+        try (var client = KafkaRequestClient.builder(KAFKA.getBootstrapServers(), "JavaOrderService")
+                .timeout(Duration.ofSeconds(60)).build()) {
+            theDotnetOwnerContinuesTheTrace("kafka", KAFKA.getBootstrapServers(), traces -> client);
+        }
+    }
+
+    @Test
+    void traceADotnetRequestIntoAJavaOwnerOverKafka() throws Exception {
+        theJavaOwnerContinuesTheTrace("kafka", KAFKA.getBootstrapServers(),
+                users -> KafkaServer.builder(KAFKA.getBootstrapServers(), List.of(users)).build().start());
+    }
+
+    @Test
+    void traceAJavaRequestIntoADotnetOwnerOverSqs() throws Exception {
+        try (var sqs = sqsClient();
+             var client = SqsRequestClient.builder(sqs).timeout(Duration.ofSeconds(30))
+                     .waitTime(Duration.ofSeconds(1)).build()) {
+            theDotnetOwnerContinuesTheTrace("sqs", LOCALSTACK.getEndpoint().toString(), traces -> client);
+        }
+    }
+
+    @Test
+    void traceADotnetRequestIntoAJavaOwnerOverSqs() throws Exception {
+        try (var sqs = withoutStalePolls(sqsClient())) {
+            theJavaOwnerContinuesTheTrace("sqs", LOCALSTACK.getEndpoint().toString(),
+                    users -> SqsServer.builder(sqs, List.of(users)).waitTime(Duration.ofSeconds(1)).build().start());
+        }
+    }
+
+    /**
+     * Service Bus carries no trace: FxMap 5.1.1 sends the trace context in bytes, which Service Bus refuses ("unsupported
+     * type System.Byte[]"), so a traced .NET consumer fails on it and jfxmap leaves the trace context out. The .NET owner
+     * starts a trace of its own.
+     */
+    @Test
+    void aJavaTraceStopsAtServiceBus() throws Exception {
+        var output = new CopyOnWriteArrayList<String>();
+        var owner = startDotnetOwner(output, "owner", "servicebus", SERVICE_BUS.getConnectionString(), "trace");
+        try (var traces = new JavaTraces();
+             var client = ServiceBusRequestClient.builder(serviceBusClients()).timeout(Duration.ofSeconds(60))
+                     .build()) {
+            asksTheDotnetOwner(traces.telemetry.instrument(client));
+
+            var request = traces.only("fxmap.request");
+            var process = dotnetSpan(output, "fxmap.process");
+            assertThat(process.traceId()).isNotEqualTo(request.getTraceId());
+            assertThat(process.parentSpanId()).isEqualTo("0000000000000000");
+        } finally {
+            stop(owner);
         }
     }
 }

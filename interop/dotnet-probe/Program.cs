@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Amazon;
 using FxMap.Aws.Sqs.Extensions;
@@ -14,11 +15,14 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-// DotnetProbe owner|consumer nats|rabbitmq|kafka|sqs|servicebus <address>
+// DotnetProbe owner|consumer nats|rabbitmq|kafka|sqs|servicebus <address> [trace]
 //   the address of sqs is the endpoint of LocalStack, that of servicebus the connection string of the emulator
 //   owner:    owns the string key UserOf (users 1 Alice, 2 Bob) and answers over the transport until it is stopped
 //   consumer: maps the orders of users 1, 2 and 3 over the transport and prints them as JSON
+//   trace:    records the activities of FxMap, as an OpenTelemetry SDK would, and prints each one as it stops:
+//             SPAN <name> <trace id> <span id> <parent span id>
 var (role, transport, address) = (args[0], args[1], args[2]);
+using var listener = args.Length > 3 && args[3] == "trace" ? Trace() : null;
 
 var builder = Host.CreateApplicationBuilder();
 builder.Services.AddDbContext<UsersDb>(o => o.UseInMemoryDatabase("users"));
@@ -85,6 +89,19 @@ catch (Exception e)
 finally
 {
     await host.StopAsync();
+}
+
+static ActivityListener Trace()
+{
+    var listener = new ActivityListener
+    {
+        ShouldListenTo = source => source.Name == "FxMap",
+        Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+        ActivityStopped = activity => Console.WriteLine(
+            $"SPAN {activity.OperationName} {activity.TraceId} {activity.SpanId} {activity.ParentSpanId}")
+    };
+    ActivitySource.AddActivityListener(listener);
+    return listener;
 }
 
 public sealed class HeadersContext : IContext

@@ -19,6 +19,10 @@ import io.github.quyvu01.jfxmap.response.DataResponse;
 import io.github.quyvu01.jfxmap.response.ItemsResponse;
 import io.github.quyvu01.jfxmap.response.MapRequest;
 import io.github.quyvu01.jfxmap.response.ValueResponse;
+import io.github.quyvu01.jfxmap.supervision.ServerHealth;
+import io.github.quyvu01.jfxmap.supervision.ServerHealthChange;
+import io.github.quyvu01.jfxmap.supervision.ServerSupervisor;
+import io.github.quyvu01.jfxmap.supervision.SupervisorOptions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +41,8 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -316,5 +322,35 @@ class RabbitMqTransportIntegrationTest {
         client.close();
 
         assertThatThrownBy(() -> request(client, USER_OF, Map.of(), "Name")).isInstanceOf(CompletionException.class);
+    }
+
+    @Test
+    void aSupervisorStartsTheServerAgainWhenItsQueueIsDeleted() throws Exception {
+        var server = RabbitMqServer.builder(connection, "UserService", List.of(users())).build();
+        var changes = new CopyOnWriteArrayList<ServerHealthChange>();
+        var supervisor = new ServerSupervisor(SupervisorOptions.builder().initialBackoff(Duration.ofMillis(100))
+                .build()).register("rabbitmq", server).onHealthChange(changes::add);
+        closeables.add(supervisor);
+        supervisor.start();
+        var firstRun = server.whenStopped().toCompletableFuture();
+
+        try (var channel = connection.createChannel()) {
+            channel.queueDelete("fxmap-rpc-queue-userservice");
+        }
+
+        // The broker cancels the consumer: the run fails, and the supervisor starts the server again
+        assertThatThrownBy(() -> firstRun.get(10, TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class);
+        var deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+        while (!(server.isRunning() && supervisor.states().get("rabbitmq").restartCount() == 1)
+               && System.nanoTime() < deadline) Thread.sleep(50);
+        assertThat(supervisor.states().get("rabbitmq").restartCount()).isEqualTo(1);
+        assertThat(supervisor.states().get("rabbitmq").health()).isEqualTo(ServerHealth.HEALTHY);
+        assertThat(changes).extracting(ServerHealthChange::current).contains(ServerHealth.DEGRADED);
+
+        var mapper = FxMap.builder().addProfiles(new OrderDtoProfile())
+                .requestClient(client(Duration.ofSeconds(10))).throwIfException().build();
+        var dtos = List.of(new OrderDto(1), new OrderDto(2));
+        mapper.map(dtos);
+        assertThat(dtos).extracting(d -> d.userName).containsExactly("Alice", "Bob");
     }
 }
