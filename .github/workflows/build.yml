@@ -36,3 +36,21 @@ jobs:
       - if: runner.os == 'Windows'
         shell: cmd
         run: samples\run.cmd -Check
+
+  # Java and .NET FxMap 5.1.1 asking each other over NATS, RabbitMQ and Kafka (interop/)
+  dotnet-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - uses: gradle/actions/setup-gradle@v4
+      - run: dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out
+      - run: ./gradlew :interop:test
+        env:
+          JFXMAP_DOTNET_PROBE: dotnet ${{ github.workspace }}/interop/dotnet-probe/out/DotnetProbe.dll
