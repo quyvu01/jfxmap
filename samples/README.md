@@ -6,7 +6,7 @@ transport and the Spring Boot starter.
 | Service | Owns | Ports | What jfxmap does there |
 |---|---|---|---|
 | `user-service` | users, countries, addresses (JPA, H2) | HTTP 8081, gRPC 9091 | `UserConfig` exposes `User` under the string key `UserOf`; the starter answers it from JPA and serves it on gRPC |
-| `order-service` | orders (JPA, H2), which hold only a `userId` | HTTP 8082 | `OrderResponseProfile` fills each order's user name, email, country, upper-case name and address count from `UserOf`, over gRPC |
+| `order-service` | orders (JPA, H2), which hold only a `userId` | HTTP 8082 | `OrderResponseProfile` fills each order's user name, email, country, upper-case name and address count from `UserOf`, over gRPC; it compiles with the `JfxMapExpressions` javac plugin of jfxmap-validation, so an invalid expression in the profile fails the build |
 
 `UserOf` is a string key, so a .NET FxMap service that declares `UseDistributedKey("UserOf")` can take either side.
 

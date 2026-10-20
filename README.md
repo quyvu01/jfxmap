@@ -24,6 +24,7 @@ service that owns the entity, batching the ids of every object into one request 
 | `jfxmap-graphql` | FxMap.HotChocolate's counterpart, on graphql-java: `JfxMapGraphQl` resolves the mapped fields of a type through a DataLoader, so a query asks once per key for the fields it selects |
 | `jfxmap-spring-boot-starter` | Auto-configuration for Spring Boot 4.1: profile and entity configuration beans, JPA and MongoDB handlers, the server and client of each transport from `jfxmap.*` properties |
 | `jfxmap-expression` | The FxMap expression language (`Orders:where(Status = 'Done'):sum(Total)`): tokenizer, parser to a syntax tree, and an in-memory evaluator over records, JavaBeans, Maps and collections. See [expression.md](https://github.com/quyvu01/FxMap/blob/main/docs/expression.md) for the syntax |
+| `jfxmap-validation` | FxMap.Analyzers' counterpart: the javac plugin `JfxMapExpressions` reports an invalid expression of a profile as a compile error (`OFX001`), and `JfxMapValidator` checks profiles and entity configurations at startup |
 
 ## Usage
 
@@ -132,6 +133,72 @@ Java and `UseDistributedKey("UserOf")` in .NET. The subjects, exchanges, queues,
 FxMap 5.1.1 sends; [interop/](interop/) checks it against a real .NET FxMap service on NATS, RabbitMQ, Kafka, SQS
 (LocalStack) and Service Bus (its emulator), in both directions (`dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out`, then run
 `./gradlew :interop:test` with `JFXMAP_DOTNET_PROBE="dotnet $PWD/interop/dotnet-probe/out/DotnetProbe.dll"`).
+
+## Validation
+
+`jfxmap-validation` checks expressions before the first mapping does, in two opt-in ways.
+
+**At compile time**, the javac plugin `JfxMapExpressions` (FxMap.Analyzers' `OFX001`) parses the expression given to
+`map(target, "...")`, `expression("...")` and `otherwise("...")` when it is a string literal or a compile-time
+constant, and reports one that does not parse as a compile error on the literal:
+
+```
+OrderProfile.java:15: error: OFX001: Expression 'Country{Name}' is invalid: Projection requires '.' before '{' at position 7
+```
+
+The calls are matched by the method javac resolves, so `Stream.map(...)` or another class's `map(x, "...")` is never
+reported. Null, blank and non-constant expressions are not checked. Put the module on the annotation processor path
+and pass `-Xplugin:JfxMapExpressions` (`-Xplugin:JfxMapExpressions warn` makes it a warning, which `-Werror` still
+turns into a failure). Gradle:
+
+```kotlin
+dependencies {
+    annotationProcessor("io.github.quyvu01:jfxmap-validation:0.1.0-SNAPSHOT")
+}
+
+tasks.compileJava {
+    options.compilerArgs.add("-Xplugin:JfxMapExpressions")
+}
+```
+
+Maven:
+
+```xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-compiler-plugin</artifactId>
+    <configuration>
+        <annotationProcessorPaths>
+            <path>
+                <groupId>io.github.quyvu01</groupId>
+                <artifactId>jfxmap-validation</artifactId>
+                <version>0.1.0-SNAPSHOT</version>
+            </path>
+        </annotationProcessorPaths>
+        <compilerArgs>
+            <arg>-Xplugin:JfxMapExpressions</arg>
+        </compilerArgs>
+    </configuration>
+</plugin>
+```
+
+On the processor path the plugin needs only `jfxmap-expression`. [samples/order-service](samples/order-service/build.gradle.kts)
+compiles with it.
+
+**At startup**, `JfxMapValidator` checks what the plugin cannot see, such as an expression built from configuration:
+
+```java
+List<ValidationProblem> problems = JfxMapValidator.validate(profiles);  // ProfileOf<?>... or an Iterable
+JfxMapValidator.validateEntities(entityConfigurations);                 // EntityConfigureOf<?>...
+JfxMapValidator.validateOrThrow(profiles, entityConfigurations);        // JfxMapValidationException with every problem
+```
+
+A profile is checked by declaring its rules, planning them as the mapper does (readable keys, writable targets, no
+cycle) and parsing each fixed expression (the functions of a conditional rule are not called). An entity
+configuration is checked by running its `configure()` and checking that each exposed name is a plain name an
+expression can use. Each `ValidationProblem` names the class, the property, the expression and what is wrong. Nothing
+runs it by itself: the Java parser may reject a few constructs that FxMap's parser accepts, so call it where it fits,
+in a test or at startup.
 
 ## Build
 
