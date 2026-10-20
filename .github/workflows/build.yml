@@ -17,7 +17,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build
       # The benchmarks compile, and every library module and the BOM still publish (not run, not uploaded)
-      - run: ./gradlew :benchmarks:jmhJar publishToMavenLocal publishAllPublicationsToStagingRepository
+      - run: ./gradlew :benchmarks:jmhJar publishToMavenLocal
+      # The Maven Central bundle release.yml uploads, signed here with a throwaway key: every module is in it with its
+      # sources, javadoc, signatures and checksums, and each signature verifies
+      - name: Build and check the Maven Central bundle
+        run: |
+          export GNUPGHOME=$(mktemp -d)
+          gpg --batch --pinentry-mode loopback --passphrase ci --quick-gen-key "jfxmap ci <ci@example.invalid>" rsa4096 sign never
+          export ORG_GRADLE_PROJECT_signingInMemoryKey="$(gpg --batch --pinentry-mode loopback --passphrase ci --armor --export-secret-keys)"
+          export ORG_GRADLE_PROJECT_signingInMemoryKeyPassword=ci
+          ./gradlew verifyCentralBundle -Pversion=0.0.0-ci
+          bundle=$(mktemp -d)
+          unzip -q build/central-bundle.zip -d "$bundle"
+          find "$bundle" -name '*.asc' -print0 | while IFS= read -r -d '' signature; do
+            gpg --batch --verify "$signature" "${signature%.asc}" 2>/dev/null || { echo "::error::Bad signature $signature"; exit 1; }
+          done
+          # The SNAPSHOT version of a plain build must not make a bundle
+          if ./gradlew centralBundle -q; then echo "::error::centralBundle took a SNAPSHOT version"; exit 1; fi
 
   # The run scripts of the samples, on each OS they support: start both services and check /orders
   sample-scripts:

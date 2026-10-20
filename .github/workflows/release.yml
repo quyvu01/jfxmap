@@ -1,0 +1,87 @@
+name: release
+
+# Pushing a tag v<version> (e.g. v0.1.0) builds and tests everything, then uploads every jfxmap module, signed, to
+# the Maven Central Portal. By default the deployment stops at "Validated": it goes public only once you press Publish
+# on https://central.sonatype.com/publishing/deployments. Set the repository variable CENTRAL_PUBLISHING_TYPE to
+# AUTOMATIC to skip that click.
+#
+# Secrets: CENTRAL_TOKEN_USERNAME and CENTRAL_TOKEN_PASSWORD (a Central Portal user token), SIGNING_KEY (an
+# ASCII-armored GPG secret key) and SIGNING_KEY_PASSWORD.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the version from the tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || [[ "$version" == *SNAPSHOT* ]]; then
+            echo "::error::The tag $GITHUB_REF_NAME is not v<major>.<minor>.<patch>[-<label>]"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Check the secrets
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in CENTRAL_TOKEN_USERNAME CENTRAL_TOKEN_PASSWORD SIGNING_KEY SIGNING_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then echo "::error::The repository secret $name is not set"; missing=1; fi
+          done
+          exit $missing
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew build -Pversion=${{ steps.version.outputs.version }}
+      - run: ./gradlew verifyCentralBundle -Pversion=${{ steps.version.outputs.version }}
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: central-bundle-${{ steps.version.outputs.version }}
+          path: build/central-bundle.zip
+      - name: Upload to the Maven Central Portal
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          PUBLISHING_TYPE: ${{ vars.CENTRAL_PUBLISHING_TYPE || 'USER_MANAGED' }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          auth="Authorization: Bearer $(printf '%s:%s' "$CENTRAL_TOKEN_USERNAME" "$CENTRAL_TOKEN_PASSWORD" | base64 -w0)"
+          api=https://central.sonatype.com/api/v1/publisher
+          id=$(curl --fail-with-body -sS -H "$auth" -F bundle=@build/central-bundle.zip \
+            "$api/upload?name=jfxmap-$VERSION&publishingType=$PUBLISHING_TYPE")
+          echo "Deployment $id ($PUBLISHING_TYPE)"
+          # Wait until the Portal has validated the bundle (or published it, when AUTOMATIC)
+          for attempt in $(seq 1 90); do
+            status=$(curl --fail-with-body -sS -X POST -H "$auth" "$api/status?id=$id")
+            state=$(jq -r .deploymentState <<< "$status")
+            echo "$state"
+            case "$state" in
+              FAILED) jq . <<< "$status"; exit 1 ;;
+              VALIDATED) echo "::notice::jfxmap $VERSION is validated: press Publish on https://central.sonatype.com/publishing/deployments"; exit 0 ;;
+              PUBLISHING|PUBLISHED) echo "::notice::jfxmap $VERSION is $state on Maven Central"; exit 0 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::The deployment $id is still $state; see https://central.sonatype.com/publishing/deployments"
+          exit 1
