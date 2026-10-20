@@ -1,4 +1,4 @@
-package io.github.quyvu01.jfxmap.jpa;
+package io.github.quyvu01.jfxmap.provider;
 
 import org.junit.jupiter.api.Test;
 
@@ -42,5 +42,17 @@ class IdConverterTest {
     @Test
     void doesNotSupportOtherTypes() {
         assertThat(IdConverter.of(LocalDate.class)).isNull();
+    }
+
+    @Test
+    void usesTheGivenParser() {
+        var converter = IdConverter.using(s -> {
+            if (!s.startsWith("#")) throw new IllegalArgumentException(s);
+            return s.substring(1);
+        });
+
+        assertThat(converter.convert("#7")).isEqualTo("7");
+        assertThat(converter.convert("7")).isNull();
+        assertThat(converter.convert(null)).isNull();
     }
 }

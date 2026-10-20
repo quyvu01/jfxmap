@@ -9,6 +9,11 @@ grpc = "1.83.1"
 protobuf = "4.35.1"
 protobufPlugin = "0.9.5"
 spring-boot = "4.1.1"
+mongodb = "5.8.1"
+nats = "2.26.4"
+rabbitmq = "5.30.0"
+kafka = "4.2.1"
+testcontainers = "2.0.5"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -30,6 +35,16 @@ protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "p
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
 spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure" }
 spring-boot-test = { module = "org.springframework.boot:spring-boot-test" }
+mongodb-driver-sync = { module = "org.mongodb:mongodb-driver-sync", version.ref = "mongodb" }
+jnats = { module = "io.nats:jnats", version.ref = "nats" }
+rabbitmq-amqp-client = { module = "com.rabbitmq:amqp-client", version.ref = "rabbitmq" }
+kafka-clients = { module = "org.apache.kafka:kafka-clients", version.ref = "kafka" }
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+testcontainers = { module = "org.testcontainers:testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupiter" }
+testcontainers-mongodb = { module = "org.testcontainers:testcontainers-mongodb" }
+testcontainers-rabbitmq = { module = "org.testcontainers:testcontainers-rabbitmq" }
+testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka" }
 
 [plugins]
 protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }

@@ -21,6 +21,10 @@ dependencies {
     // Each one turns on its part of the auto-configuration when the application adds it
     compileOnly(project(":jfxmap-jpa"))
     compileOnly(project(":jfxmap-grpc"))
+    compileOnly(project(":jfxmap-mongodb"))
+    compileOnly(project(":jfxmap-nats"))
+    compileOnly(project(":jfxmap-rabbitmq"))
+    compileOnly(project(":jfxmap-kafka"))
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
@@ -32,6 +36,16 @@ dependencies {
     testImplementation(libs.grpc.inprocess)
     testImplementation(libs.hibernate.core)
     testRuntimeOnly(libs.h2)
+    testImplementation(project(":jfxmap-mongodb"))
+    testImplementation(project(":jfxmap-nats"))
+    testImplementation(project(":jfxmap-rabbitmq"))
+    testImplementation(project(":jfxmap-kafka"))
+    // The integration tests run the transports against real brokers in Docker
+    testImplementation(platform(libs.testcontainers.bom))
+    testImplementation(libs.testcontainers.junit)
+    testImplementation(libs.testcontainers.mongodb)
+    testImplementation(libs.testcontainers.rabbitmq)
+    testImplementation(libs.testcontainers.kafka)
 }
 
 tasks.withType<JavaCompile>().configureEach {
