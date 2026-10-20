@@ -337,4 +337,99 @@ class DistributedMapperTest {
 
         assertThat(client.sent).isEmpty();
     }
+
+    @Test
+    void mapsOnlyTheChosenPropertiesOfTheObjects() {
+        var dtos = List.of(new UserSummaryDto(ALICE), new UserSummaryDto(BOB));
+
+        mapper(new UserSummaryProfile()).mapPropertiesAsync(dtos, java.util.Set.of("userEmail"), Map.of("h", "v"))
+                .join();
+
+        assertThat(client.sent).hasSize(1);
+        assertThat(client.sent.getFirst().request().expressions()).containsExactly("UserEmail");
+        assertThat(client.sent.getFirst().context().headers()).containsEntry("h", "v");
+        assertThat(dtos).extracting(UserSummaryDto::getUserEmail)
+                .containsExactly("alice@example.com", "bob@example.com");
+        assertThat(dtos).extracting(UserSummaryDto::getUserName).containsOnlyNulls();
+    }
+
+    @Test
+    void mapsTheRulesThatFillTheKeysOfTheChosenProperties() {
+        client.value(USER, ALICE, "ProvinceId", "7").value(PROVINCE, 7, null, "\"Hanoi\"");
+        var member = new MemberDto(ALICE);
+
+        mapper(new MemberProfile()).mapPropertiesAsync(List.of(member), java.util.Set.of("provinceName"), Map.of())
+                .join();
+
+        assertThat(client.sent).extracting(FakeRequestClient.Sent::key).containsExactly(USER, PROVINCE);
+        assertThat(member.getProvinceName()).isEqualTo("Hanoi");
+    }
+
+    @Test
+    void mappingChosenPropertiesLeavesTheObjectsOfTheValuesAlone() {
+        client.value(USER, ALICE, "Summary", "{\"userId\":\"" + BOB + "\"}");
+        var dto = new UserDetailDto(ALICE);
+
+        mapper(new UserDetailProfile(), new UserSummaryProfile())
+                .mapPropertiesAsync(List.of(dto), java.util.Set.of("summary", "unknown"), Map.of()).join();
+
+        assertThat(dto.summary().getUserId()).isEqualTo(BOB);
+        assertThat(dto.summary().getUserName()).isNull();
+        assertThat(client.sent).hasSize(1);
+    }
+
+    @Test
+    void mappingChosenPropertiesSkipsNullsRepeatsAndObjectsWithoutProfile() {
+        var dto = new UserSummaryDto(ALICE);
+
+        mapper(new UserSummaryProfile()).mapPropertiesAsync(Arrays.asList(dto, null, dto, "text"),
+                java.util.Set.of("userName"), Map.of()).join();
+
+        assertThat(client.sent).hasSize(1);
+        assertThat(client.sent.getFirst().request().selectorIds()).containsExactly(ALICE.toString());
+        assertThat(dto.getUserName()).isEqualTo("Alice");
+    }
+
+    @Test
+    void aFailedChosenMappingCompletesExceptionally() {
+        var failing = FxMap.builder().addProfiles(new UserSummaryProfile()).requestClient((key, request, context) -> {
+            throw new IllegalStateException("down");
+        }).throwIfException().build();
+
+        assertThat(failing.mapPropertiesAsync(List.of(new UserSummaryDto(ALICE)), java.util.Set.of("userName"),
+                Map.of())).isCompletedExceptionally();
+    }
+
+    @Test
+    void listsTheMappedPropertiesOfEachProfiledType() {
+        var mapped = mapper(new UserSummaryProfile(), new MemberProfile()).mappedProperties();
+
+        assertThat(mapped).containsOnlyKeys(UserSummaryDto.class, MemberDto.class);
+        assertThat(mapped.get(UserSummaryDto.class)).containsExactly("userName", "userEmail", "countryName");
+        assertThat(mapped.get(MemberDto.class)).containsExactlyInAnyOrder("provinceId", "provinceName");
+    }
+
+    @Test
+    void anotherMapperMapsEverythingForChosenPropertiesAndListsNoProperty() {
+        var calls = new ArrayList<Object>();
+        DistributedMapper custom = new DistributedMapper() {
+            @Override
+            public CompletableFuture<Void> mapAsync(Object value, Map<String, String> headers) {
+                calls.add(value);
+                return CompletableFuture.completedFuture(null);
+            }
+
+            @Override
+            public CompletableFuture<ItemsResponse> fetchAsync(DistributedKeyRef key,
+                                                               io.github.quyvu01.jfxmap.response.MapRequest request,
+                                                               Map<String, String> headers) {
+                return CompletableFuture.completedFuture(ItemsResponse.empty());
+            }
+        };
+
+        custom.mapPropertiesAsync(List.of("a"), java.util.Set.of("x"), Map.of()).join();
+
+        assertThat(calls).containsExactly(List.of("a"));
+        assertThat(custom.mappedProperties()).isEmpty();
+    }
 }

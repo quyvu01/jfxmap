@@ -1,10 +1,14 @@
 package io.github.quyvu01.jfxmap.interop;
 
+import com.azure.core.amqp.AmqpRetryOptions;
+import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import io.github.quyvu01.jfxmap.DistributedKeyRef;
 import io.github.quyvu01.jfxmap.MapContext;
+import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusRequestClient;
+import io.github.quyvu01.jfxmap.azure.servicebus.ServiceBusServer;
 import io.github.quyvu01.jfxmap.RequestClient;
 import io.github.quyvu01.jfxmap.fluent.EntityConfigureOf;
 import io.github.quyvu01.jfxmap.kafka.KafkaRequestClient;
@@ -19,15 +23,26 @@ import io.github.quyvu01.jfxmap.response.DataResponse;
 import io.github.quyvu01.jfxmap.response.ItemsResponse;
 import io.github.quyvu01.jfxmap.response.MapRequest;
 import io.github.quyvu01.jfxmap.response.ValueResponse;
+import io.github.quyvu01.jfxmap.sqs.SqsRequestClient;
+import io.github.quyvu01.jfxmap.sqs.SqsServer;
 import io.nats.client.Nats;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.testcontainers.azure.ServiceBusEmulatorContainer;
 import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.Network;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.kafka.KafkaContainer;
+import org.testcontainers.localstack.LocalStackContainer;
+import org.testcontainers.mssqlserver.MSSQLServerContainer;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
+import org.testcontainers.utility.MountableFile;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.sqs.SqsClient;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -52,13 +67,24 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Runs when {@code JFXMAP_DOTNET_PROBE} gives the command that starts the probe (CI publishes it first).
  */
 @EnabledIfEnvironmentVariable(named = "JFXMAP_DOTNET_PROBE", matches = ".+")
-@SuppressWarnings("try")
+@SuppressWarnings({"try", "resource"})
 class DotnetInteropTest {
     static final GenericContainer<?> NATS = new GenericContainer<>("nats:2.11")
             .withExposedPorts(4222)
             .waitingFor(Wait.forLogMessage(".*Server is ready.*", 1));
     static final RabbitMQContainer RABBIT = new RabbitMQContainer("rabbitmq:4.1");
     static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.1.0");
+    static final LocalStackContainer LOCALSTACK = new LocalStackContainer("localstack/localstack:4.9");
+    static final Network NETWORK = Network.newNetwork();
+    static final MSSQLServerContainer SQL = new MSSQLServerContainer(
+            "mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04").acceptLicense().withNetwork(NETWORK);
+    // The emulator has no management API: the queues of UserOf are declared in servicebus-emulator.json
+    static final ServiceBusEmulatorContainer SERVICE_BUS = new ServiceBusEmulatorContainer(
+            "mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1")
+            .acceptLicense()
+            .withConfig(MountableFile.forClasspathResource("servicebus-emulator.json"))
+            .withNetwork(NETWORK)
+            .withMsSqlServerContainer(SQL);
 
     record User(int id, String name, String email) {
     }
@@ -85,10 +111,16 @@ class DotnetInteropTest {
         NATS.start();
         RABBIT.start();
         KAFKA.start();
+        LOCALSTACK.start();
+        SERVICE_BUS.start();
     }
 
     @AfterAll
     static void stopBrokers() {
+        SERVICE_BUS.stop();
+        SQL.stop();
+        NETWORK.close();
+        LOCALSTACK.stop();
         KAFKA.stop();
         RABBIT.stop();
         NATS.stop();
@@ -107,6 +139,21 @@ class DotnetInteropTest {
         factory.setHost("localhost");
         factory.setPort(RABBIT.getAmqpPort());
         return factory.newConnection();
+    }
+
+    private static SqsClient sqsClient() {
+        return SqsClient.builder()
+                .endpointOverride(LOCALSTACK.getEndpoint())
+                .region(Region.of(LOCALSTACK.getRegion()))
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(LOCALSTACK.getAccessKey(), LOCALSTACK.getSecretKey())))
+                .build();
+    }
+
+    private static ServiceBusClientBuilder serviceBusClients() {
+        // The emulator answers a wait for the next session only when it times out: a short one picks up new sessions
+        return new ServiceBusClientBuilder().connectionString(SERVICE_BUS.getConnectionString())
+                .retryOptions(new AmqpRetryOptions().setTryTimeout(Duration.ofSeconds(3)));
     }
 
     private static QueryHandler javaUsers(AtomicReference<MapContext> seen) {
@@ -261,6 +308,51 @@ class DotnetInteropTest {
         var seen = new AtomicReference<MapContext>();
         try (var server = KafkaServer.builder(KAFKA.getBootstrapServers(), List.of(javaUsers(seen))).build().start()) {
             theDotnetConsumerMapsFromJava("kafka", KAFKA.getBootstrapServers(), seen);
+        }
+    }
+
+    // --- Amazon SQS
+
+    @Test
+    void aJavaClientAsksADotnetOwnerOverSqs() throws Exception {
+        var owner = startDotnetOwner("sqs", LOCALSTACK.getEndpoint().toString());
+        try (var sqs = sqsClient();
+             var client = SqsRequestClient.builder(sqs).timeout(Duration.ofSeconds(30))
+                     .waitTime(Duration.ofSeconds(1)).build()) {
+            asksTheDotnetOwner(client);
+        } finally {
+            stop(owner);
+        }
+    }
+
+    @Test
+    void aDotnetConsumerAsksAJavaOwnerOverSqs() throws Exception {
+        var seen = new AtomicReference<MapContext>();
+        try (var sqs = sqsClient();
+             var server = SqsServer.builder(sqs, List.of(javaUsers(seen))).waitTime(Duration.ofSeconds(1)).build()
+                     .start()) {
+            theDotnetConsumerMapsFromJava("sqs", LOCALSTACK.getEndpoint().toString(), seen);
+        }
+    }
+
+    // --- Azure Service Bus
+
+    @Test
+    void aJavaClientAsksADotnetOwnerOverServiceBus() throws Exception {
+        var owner = startDotnetOwner("servicebus", SERVICE_BUS.getConnectionString());
+        try (var client = ServiceBusRequestClient.builder(serviceBusClients()).timeout(Duration.ofSeconds(60))
+                .build()) {
+            asksTheDotnetOwner(client);
+        } finally {
+            stop(owner);
+        }
+    }
+
+    @Test
+    void aDotnetConsumerAsksAJavaOwnerOverServiceBus() throws Exception {
+        var seen = new AtomicReference<MapContext>();
+        try (var server = ServiceBusServer.builder(serviceBusClients(), List.of(javaUsers(seen))).build().start()) {
+            theDotnetConsumerMapsFromJava("servicebus", SERVICE_BUS.getConnectionString(), seen);
         }
     }
 }

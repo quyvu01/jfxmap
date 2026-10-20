@@ -32,6 +32,25 @@ public record ProfilePlan(Class<?> modelType, List<Rule> rules, List<BeanPropert
                        ConditionalExpression conditional, int order) {
     }
 
+    /** The rules of {@code targets}, and the rules that fill the keys they read, transitively. */
+    public List<Rule> rulesFor(Set<String> targets) {
+        var byTarget = new HashMap<String, Rule>();
+        for (var rule : rules) byTarget.put(rule.target().name(), rule);
+        var needed = new HashSet<Rule>();
+        var pending = new ArrayList<Rule>();
+        for (var target : targets) {
+            var rule = byTarget.get(target);
+            if (rule != null) pending.add(rule);
+        }
+        while (!pending.isEmpty()) {
+            var rule = pending.removeLast();
+            if (!needed.add(rule)) continue;
+            var dependency = byTarget.get(rule.selector().name());
+            if (dependency != null) pending.add(dependency);
+        }
+        return rules.stream().filter(needed::contains).toList();
+    }
+
     public static ProfilePlan of(ProfileOf<?> profile) {
         var modelType = profile.modelType();
         var properties = BeanIntrospector.properties(modelType);

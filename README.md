@@ -6,7 +6,7 @@ Given a DTO with a foreign key (`userId`), jfxmap fills its related properties (
 service that owns the entity, batching the ids of every object into one request per entity type.
 
 > Status: early. Ported: the core, the expression language, the JPA and MongoDB data providers, the gRPC, NATS,
-> RabbitMQ and Kafka transports and a Spring Boot starter. AWS SQS, Azure Service Bus and GraphQL are not ported yet.
+> RabbitMQ, Kafka, AWS SQS and Azure Service Bus transports, a GraphQL integration and a Spring Boot starter.
 
 ## Modules
 
@@ -19,6 +19,9 @@ service that owns the entity, batching the ids of every object into one request 
 | `jfxmap-nats` | FxMap.Nats's counterpart: `NatsServer` answers on `fxmap-{namespace}-{name}` subjects (with an optional prefix), `NatsRequestClient` sends requests on them |
 | `jfxmap-rabbitmq` | FxMap.RabbitMq's counterpart: `RabbitMqServer` binds `fxmap-rpc-queue-{app}` to one direct exchange per key, `RabbitMqRequestClient` replies through its own `fxmap-reply-*` queue |
 | `jfxmap-kafka` | FxMap.Kafka's counterpart: `KafkaServer` consumes `fxmap-request-topic-{key}` in group `fxmap-rpc-server-group`, `KafkaRequestClient` reads replies from its own `fxmap-response-topic-*` |
+| `jfxmap-sqs` | FxMap.Aws.Sqs's counterpart: `SqsServer` long-polls `fxmap-{namespace}-{name}` queues (dots as dashes), `SqsRequestClient` reads replies from its own `fxmap-response-*` queue |
+| `jfxmap-azure-servicebus` | FxMap.Azure.ServiceBus's counterpart: `ServiceBusServer` processes the sessions of `fxmap-request-{key}` (with an optional prefix), `ServiceBusRequestClient` reads its own session of `fxmap-reply-{key}` |
+| `jfxmap-graphql` | FxMap.HotChocolate's counterpart, on graphql-java: `JfxMapGraphQl` resolves the mapped fields of a type through a DataLoader, so a query asks once per key for the fields it selects |
 | `jfxmap-spring-boot-starter` | Auto-configuration for Spring Boot 4.1: profile and entity configuration beans, JPA and MongoDB handlers, the server and client of each transport from `jfxmap.*` properties |
 | `jfxmap-expression` | The FxMap expression language (`Orders:where(Status = 'Done'):sum(Total)`): tokenizer, parser to a syntax tree, and an in-memory evaluator over records, JavaBeans, Maps and collections. See [expression.md](https://github.com/quyvu01/FxMap/blob/main/docs/expression.md) for the syntax |
 
@@ -101,7 +104,24 @@ jfxmap.nats.url=nats://nats:4222
 jfxmap.rabbitmq.host=rabbitmq           # also port, virtual-host, username, password, ssl
 jfxmap.kafka.bootstrap-servers=kafka:9092
 jfxmap.application-name=user-service    # names the RabbitMQ and Kafka queues; spring.application.name otherwise
+jfxmap.sqs.region=us-east-1             # also endpoint, access-key-id, secret-access-key; or an SqsClient bean
+jfxmap.servicebus.connection-string=Endpoint=sb://...   # also topic-prefix, create-queues, max-concurrent-sessions
 ```
+
+Service Bus queues need sessions. The server creates the missing ones through the administration API
+(`jfxmap.servicebus.create-queues=false` to skip it); with the emulator, which has no such API, declare them in its
+config, and set `jfxmap.servicebus.try-timeout=3s` so new sessions are picked up quickly.
+
+With Spring for GraphQL (`spring-boot-starter-graphql`) and `jfxmap-graphql`, the mapped properties of each profiled
+type become fields resolved by jfxmap. Name the schema type of a class when it is not its simple name, and choose the
+HTTP headers that reach the `MapContext`:
+
+```properties
+jfxmap.graphql.type-names[com.example.orders.OrderView]=Order
+jfxmap.graphql.forwarded-headers=authorization
+```
+
+Without Spring, `JfxMapGraphQl.builder(mapper).build().configure(runtimeWiringBuilder)` does the same.
 
 `MongoCollection` beans get a `MongoQueryHandler` each, for the entity configuration of their document class.
 
@@ -109,8 +129,8 @@ Then inject `DistributedMapper`. [samples/](samples/README.md) has a user servic
 
 To call a .NET FxMap service, or be called by one, use a string key on both sides: `useDistributedKey("UserOf")` in
 Java and `UseDistributedKey("UserOf")` in .NET. The subjects, exchanges, queues, topics, headers and JSON match what
-FxMap 5.1.1 sends; [interop/](interop/) checks it against a real .NET FxMap service on NATS, RabbitMQ and Kafka, in
-both directions (`dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out`, then run
+FxMap 5.1.1 sends; [interop/](interop/) checks it against a real .NET FxMap service on NATS, RabbitMQ, Kafka, SQS
+(LocalStack) and Service Bus (its emulator), in both directions (`dotnet publish interop/dotnet-probe -c Release -o interop/dotnet-probe/out`, then run
 `./gradlew :interop:test` with `JFXMAP_DOTNET_PROBE="dotnet $PWD/interop/dotnet-probe/out/DotnetProbe.dll"`).
 
 ## Build
@@ -121,7 +141,8 @@ Java 21 and the Gradle wrapper:
 ./gradlew build
 ```
 
-The integration tests start MongoDB, NATS, RabbitMQ and Kafka with Testcontainers, so they need Docker.
+The integration tests start MongoDB, NATS, RabbitMQ, Kafka, LocalStack and the Service Bus emulator with
+Testcontainers, so they need Docker.
 
 ## Expressions
 

@@ -11,6 +11,7 @@ import io.github.quyvu01.jfxmap.response.ValueResponse;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -68,6 +69,36 @@ final class DefaultDistributedMapper implements DistributedMapper {
     }
 
     @Override
+    public CompletableFuture<Void> mapPropertiesAsync(Collection<?> objects, Set<String> properties,
+                                                      Map<String, String> headers) {
+        var context = new MapContext(headers, services);
+        try {
+            var descriptors = new ArrayList<Descriptor>();
+            Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+            for (var object : objects) {
+                if (object == null || !visited.add(object)) continue;
+                var plan = planOf(object.getClass());
+                if (plan == null) continue;
+                for (var rule : plan.rulesFor(properties)) descriptors.add(new Descriptor(rule, object));
+            }
+            return mapOrders(descriptors, context);
+        } catch (RuntimeException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    @Override
+    public Map<Class<?>, Set<String>> mappedProperties() {
+        var mapped = new LinkedHashMap<Class<?>, Set<String>>();
+        plans.forEach((type, plan) -> {
+            var targets = new LinkedHashSet<String>();
+            for (var rule : plan.rules()) targets.add(rule.target().name());
+            mapped.put(type, Collections.unmodifiableSet(targets));
+        });
+        return Collections.unmodifiableMap(mapped);
+    }
+
+    @Override
     public CompletableFuture<ItemsResponse> fetchAsync(DistributedKeyRef key, MapRequest request,
                                                        Map<String, String> headers) {
         if (requestClient == null) return CompletableFuture.failedFuture(new DistributedMapException.NoRequestClient());
@@ -87,15 +118,7 @@ final class DefaultDistributedMapper implements DistributedMapper {
             return DONE;
         }
 
-        var byOrder = new TreeMap<Integer, List<Descriptor>>();
-        for (var descriptor : descriptors)
-            byOrder.computeIfAbsent(descriptor.rule.order(), o -> new ArrayList<>()).add(descriptor);
-
-        // A level reads the keys that the previous one wrote, so the levels run one after the other.
-        var chain = DONE;
-        for (var level : byOrder.values()) chain = chain.thenCompose(ignored -> mapOrder(level, context));
-
-        return chain.thenCompose(ignored -> {
+        return mapOrders(descriptors, context).thenCompose(ignored -> {
             var next = new ArrayList<>();
             for (var descriptor : descriptors) {
                 if (TypeClassifier.isLeaf(descriptor.rule.target().type())) continue;
@@ -104,6 +127,18 @@ final class DefaultDistributedMapper implements DistributedMapper {
             }
             return next.isEmpty() ? DONE : mapLevel(next, context, depth + 1);
         });
+    }
+
+    // The rules of one level of objects, by dependency order.
+    private CompletableFuture<Void> mapOrders(List<Descriptor> descriptors, MapContext context) {
+        var byOrder = new TreeMap<Integer, List<Descriptor>>();
+        for (var descriptor : descriptors)
+            byOrder.computeIfAbsent(descriptor.rule.order(), o -> new ArrayList<>()).add(descriptor);
+
+        // An order reads the keys that the previous one wrote, so the orders run one after the other.
+        var chain = DONE;
+        for (var level : byOrder.values()) chain = chain.thenCompose(ignored -> mapOrder(level, context));
+        return chain;
     }
 
     private CompletableFuture<Void> mapOrder(List<Descriptor> descriptors, MapContext context) {
