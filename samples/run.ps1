@@ -55,13 +55,16 @@ function Start-Service([string]$name) {
 function Wait-Service([string]$name, [string]$url, $process) {
     for ($i = 0; $i -lt 120; $i++) {
         try {
-            Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2 | Out-Null
-            Write-Host "$name is up: $url"
-            return
+            # Up once it answers with its seeded data: the seeding runs just after the web server starts
+            $content = (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2).Content
+            if ($content.StartsWith('[{')) {
+                Write-Host "$name is up: $url"
+                return
+            }
         } catch {
-            if ($process.HasExited) { break }
-            Start-Sleep -Seconds 1
         }
+        if ($process.HasExited) { break }
+        Start-Sleep -Seconds 1
     }
     Write-Host "$name did not start; the end of its log:"
     Get-Content (Join-Path $logs "$name.log") -Tail 40 -ErrorAction SilentlyContinue
