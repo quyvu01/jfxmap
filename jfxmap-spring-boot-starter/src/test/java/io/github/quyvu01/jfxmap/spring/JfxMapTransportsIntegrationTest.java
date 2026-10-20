@@ -47,8 +47,9 @@ class JfxMapTransportsIntegrationTest {
     @Container
     static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.1.0");
 
+    // Not 8.x: MongoDB 8 refuses to start on Linux 6.19 and newer (SERVER-121912)
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.0");
+    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0");
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(JfxMapAutoConfiguration.class));
