@@ -8,6 +8,7 @@ import io.github.quyvu01.jfxmap.grpc.FxMapGrpcService;
 import io.github.quyvu01.jfxmap.grpc.GrpcRequestClient;
 import io.github.quyvu01.jfxmap.jpa.JpaQueryHandler;
 import io.github.quyvu01.jfxmap.mongodb.MongoQueryHandler;
+import io.github.quyvu01.jfxmap.provider.InMemoryQueryHandler;
 import io.github.quyvu01.jfxmap.provider.QueryHandler;
 import io.github.quyvu01.jfxmap.response.ItemsResponse;
 import io.github.quyvu01.jfxmap.spring.Fixtures.EmailVisibility;
@@ -68,6 +69,8 @@ class JfxMapAutoConfigurationTest {
                 .withBean(UserConfig.class)
                 .withBean(EmailVisibility.class, () -> new EmailVisibility(true))
                 .withBean(EntityManagerFactory.class, () -> Fixtures.usersDatabase("starter-jpa"))
+                // Without the telemetry around it, the handler is the JPA one
+                .withPropertyValues("jfxmap.telemetry.enabled=false")
                 .run(context -> {
                     var orders = mapOrders(context.getBean(DistributedMapper.class));
 
@@ -84,8 +87,9 @@ class JfxMapAutoConfigurationTest {
         runner.withBean(UserConfig.class)
                 .withBean(QueryHandler.class, Fixtures::inMemoryUsers)
                 .withBean(EntityManagerFactory.class, () -> Fixtures.usersDatabase("starter-prefers"))
+                .withPropertyValues("jfxmap.telemetry.enabled=false")
                 .run(context -> assertThat(context.getBean(JfxMapQueryHandlers.class).all())
-                        .singleElement().isNotInstanceOf(JpaQueryHandler.class));
+                        .singleElement().isInstanceOf(InMemoryQueryHandler.class));
     }
 
     @Test

@@ -1,6 +1,9 @@
 package io.github.quyvu01.jfxmap.spring;
 
 import io.github.quyvu01.jfxmap.FxMap;
+import io.github.quyvu01.jfxmap.pipeline.RetryPolicy;
+import io.github.quyvu01.jfxmap.supervision.SupervisionStrategy;
+import io.github.quyvu01.jfxmap.supervision.SupervisorOptions;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
@@ -34,6 +37,12 @@ public class JfxMapProperties {
     private final ServiceBus servicebus = new ServiceBus();
 
     private final GraphQl graphql = new GraphQl();
+
+    private final Retry retry = new Retry();
+
+    private final Supervisor supervisor = new Supervisor();
+
+    private final Telemetry telemetry = new Telemetry();
 
     public boolean isThrowIfException() {
         return throwIfException;
@@ -85,6 +94,204 @@ public class JfxMapProperties {
 
     public GraphQl getGraphql() {
         return graphql;
+    }
+
+    public Retry getRetry() {
+        return retry;
+    }
+
+    public Supervisor getSupervisor() {
+        return supervisor;
+    }
+
+    public Telemetry getTelemetry() {
+        return telemetry;
+    }
+
+    /** {@code jfxmap.retry.*}: how failed requests are sent again (FxMap's {@code SetRetryPolicy}). */
+    public static class Retry {
+        /** The retries after the first attempt; 0, the default, sends each request once. */
+        private int retries;
+
+        /** The delay before each retry; none when it is not set. */
+        private Duration delay;
+
+        /** With a delay, makes it double at each retry up to this maximum. */
+        private Duration maxDelay;
+
+        public int getRetries() {
+            return retries;
+        }
+
+        public void setRetries(int retries) {
+            this.retries = retries;
+        }
+
+        public Duration getDelay() {
+            return delay;
+        }
+
+        public void setDelay(Duration delay) {
+            this.delay = delay;
+        }
+
+        public Duration getMaxDelay() {
+            return maxDelay;
+        }
+
+        public void setMaxDelay(Duration maxDelay) {
+            this.maxDelay = maxDelay;
+        }
+
+        /** The policy, or {@code null} when there is no retry. */
+        public RetryPolicy toPolicy() {
+            if (retries <= 0) return null;
+            var policy = RetryPolicy.retries(retries);
+            if (delay == null) return policy;
+            return maxDelay == null ? policy.delay(delay) : policy.exponentialDelay(delay, maxDelay);
+        }
+    }
+
+    /**
+     * {@code jfxmap.supervisor.*}: how the transport servers are started again when they fail (FxMap's
+     * {@code SupervisorOptions}, with its defaults).
+     */
+    public static class Supervisor {
+        private static final SupervisorOptions DEFAULTS = SupervisorOptions.defaults();
+
+        /** Whether the servers are supervised; without, a server that fails stays stopped. */
+        private boolean enabled = true;
+
+        /** Which servers start again when one fails. */
+        private SupervisionStrategy strategy = DEFAULTS.strategy();
+
+        /** The restarts allowed within the window; beyond, the server stops for good. */
+        private int maxRestarts = DEFAULTS.maxRestarts();
+
+        /** The window the restarts are counted in. */
+        private Duration maxRestartWindow = DEFAULTS.maxRestartWindow();
+
+        /** The delay before the first restart. */
+        private Duration initialBackoff = DEFAULTS.initialBackoff();
+
+        /** The longest delay between restarts. */
+        private Duration maxBackoff = DEFAULTS.maxBackoff();
+
+        /** What the delay is multiplied by after each restart. */
+        private double backoffMultiplier = DEFAULTS.backoffMultiplier();
+
+        /** Whether failures in a row hold the restarts for a while. */
+        private boolean circuitBreaker = DEFAULTS.circuitBreaker();
+
+        /** The failures in a row that open the circuit breaker. */
+        private int circuitBreakerThreshold = DEFAULTS.circuitBreakerThreshold();
+
+        /** How long the circuit breaker stays open. */
+        private Duration circuitBreakerResetTime = DEFAULTS.circuitBreakerResetTime();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public SupervisionStrategy getStrategy() {
+            return strategy;
+        }
+
+        public void setStrategy(SupervisionStrategy strategy) {
+            this.strategy = strategy;
+        }
+
+        public int getMaxRestarts() {
+            return maxRestarts;
+        }
+
+        public void setMaxRestarts(int maxRestarts) {
+            this.maxRestarts = maxRestarts;
+        }
+
+        public Duration getMaxRestartWindow() {
+            return maxRestartWindow;
+        }
+
+        public void setMaxRestartWindow(Duration maxRestartWindow) {
+            this.maxRestartWindow = maxRestartWindow;
+        }
+
+        public Duration getInitialBackoff() {
+            return initialBackoff;
+        }
+
+        public void setInitialBackoff(Duration initialBackoff) {
+            this.initialBackoff = initialBackoff;
+        }
+
+        public Duration getMaxBackoff() {
+            return maxBackoff;
+        }
+
+        public void setMaxBackoff(Duration maxBackoff) {
+            this.maxBackoff = maxBackoff;
+        }
+
+        public double getBackoffMultiplier() {
+            return backoffMultiplier;
+        }
+
+        public void setBackoffMultiplier(double backoffMultiplier) {
+            this.backoffMultiplier = backoffMultiplier;
+        }
+
+        public boolean isCircuitBreaker() {
+            return circuitBreaker;
+        }
+
+        public void setCircuitBreaker(boolean circuitBreaker) {
+            this.circuitBreaker = circuitBreaker;
+        }
+
+        public int getCircuitBreakerThreshold() {
+            return circuitBreakerThreshold;
+        }
+
+        public void setCircuitBreakerThreshold(int circuitBreakerThreshold) {
+            this.circuitBreakerThreshold = circuitBreakerThreshold;
+        }
+
+        public Duration getCircuitBreakerResetTime() {
+            return circuitBreakerResetTime;
+        }
+
+        public void setCircuitBreakerResetTime(Duration circuitBreakerResetTime) {
+            this.circuitBreakerResetTime = circuitBreakerResetTime;
+        }
+
+        /** The options, or {@code null} when the servers are not supervised. */
+        public SupervisorOptions toOptions() {
+            if (!enabled) return null;
+            return SupervisorOptions.builder().strategy(strategy).maxRestarts(maxRestarts)
+                    .maxRestartWindow(maxRestartWindow).initialBackoff(initialBackoff).maxBackoff(maxBackoff)
+                    .backoffMultiplier(backoffMultiplier).circuitBreaker(circuitBreaker)
+                    .circuitBreakerThreshold(circuitBreakerThreshold)
+                    .circuitBreakerResetTime(circuitBreakerResetTime).build();
+        }
+    }
+
+    /** {@code jfxmap.telemetry.*}: needs jfxmap-opentelemetry on the classpath. */
+    public static class Telemetry {
+        /** Whether the requests are traced and measured with the application's OpenTelemetry. */
+        private boolean enabled = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
     }
 
     /** {@code jfxmap.grpc.*}: needs jfxmap-grpc on the classpath. */
