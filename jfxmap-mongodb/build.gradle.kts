@@ -26,8 +26,9 @@ dependencies {
     testRuntimeOnly(libs.junit.launcher)
     // The integration tests run against the real MongoDB in Docker
     testImplementation(platform(libs.testcontainers.bom))
-    testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.mongodb)
+    // Testcontainers logs the output of a container that fails to start; without a binding it is dropped
+    testRuntimeOnly(libs.slf4j.simple)
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -41,4 +42,9 @@ tasks.withType<Javadoc>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStandardStreams = true
+    }
 }
