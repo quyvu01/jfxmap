@@ -5,6 +5,10 @@ FxMap for Java: a port of [FxMap](https://github.com/quyvu01/FxMap), the fluent 
 Given a DTO with a foreign key (`userId`), jfxmap fills its related properties (`userName`, `userEmail`) from the
 service that owns the entity, batching the ids of every object into one request per entity type.
 
+<p align="center">
+  <img src="docs/assets/fxmap-hero.gif" alt="FxMap fills the UserName and UserEmail of an order from the User service in one call" width="900" />
+</p>
+
 > Status: early. Ported: the core, the expression language, the JPA and MongoDB data providers, the gRPC, NATS,
 > RabbitMQ, Kafka, AWS SQS and Azure Service Bus transports, a GraphQL integration, a Spring Boot starter, the send
 > and receive pipelines with retries, the supervision of the servers, OpenTelemetry tracing and metrics, and the
